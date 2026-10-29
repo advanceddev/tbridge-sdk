@@ -107,7 +107,7 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
   wrapper.append(modal);
   overlay.append(wrapper);
 
-  // About button (outline logo) — desktop: under close; mobile: left of close in header
+  // About button — desktop: under close; mobile: left of close in header
   const aboutBtn = el('button', 'tbridge-about-btn') as HTMLButtonElement;
   aboutBtn.type = 'button';
   aboutBtn.appendChild(createLogoSvg({ outline: false, size: 18, color: TBRIDGE_BRAND_COLOR }));
@@ -275,7 +275,8 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
         const img = el('img', 'tbridge-item-icon') as HTMLImageElement;
         img.src = wallet.image;
         img.alt = '';
-        img.loading = 'lazy';
+        img.loading = 'eager';
+        img.decoding = 'async';
         img.referrerPolicy = 'no-referrer';
         item.append(img);
       } else {
@@ -398,7 +399,8 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
           const img = el('img', 'tbridge-wallet-chip-icon') as HTMLImageElement;
           img.src = wallet.image;
           img.alt = '';
-          img.loading = 'lazy';
+          img.loading = 'eager';
+          img.decoding = 'async';
           img.referrerPolicy = 'no-referrer';
           chip.append(img);
         } else {
@@ -477,6 +479,7 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
   };
 }
 
+/** Minimal styled button shell — apps wire their own click / connect flow. */
 export function createConnectButton(label = 'Connect wallet'): HTMLButtonElement {
   ensureStyles();
 

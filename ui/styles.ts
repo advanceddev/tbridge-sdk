@@ -631,9 +631,9 @@ body.tbridge-scroll-lock {
   align-items: center;
   justify-content: center;
   margin-top: 2px;
-  padding: 10px 18px;
+  padding: 12px 24px;
   border-radius: 999px;
-  background: var(--tb-accent);
+  background: linear-gradient(135deg, var(--tb-accent) 0%, #0077B5 100%);
   color: #fff;
   font-size: 14px;
   font-weight: 600;

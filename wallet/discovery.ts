@@ -10,6 +10,7 @@ import type { StorageAdapter } from '../core/storage';
 import type { WalletInfo } from '../core/types';
 import { assertBrowser } from '../utils/browser';
 import { fetchWalletsRegistry, parseWalletsRegistry } from './registry';
+import { collectWalletImageUrls, prefetchImages } from '../utils/prefetch-images';
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
@@ -23,6 +24,7 @@ export class WalletDiscovery {
   private cache: WalletInfo[] | null = null;
   private fetchPromise: Promise<WalletInfo[]> | null = null;
   private readonly registryUrl: string;
+  private prefetchController: AbortController | null = null;
 
   constructor(
     registryUrl: string = DEFAULT_WALLETS_REGISTRY_URL,
@@ -39,6 +41,7 @@ export class WalletDiscovery {
     assertBrowser();
 
     if (!forceRefresh && this.cache) {
+      this.scheduleIconPrefetch(this.cache);
       return this.cache;
     }
 
@@ -46,6 +49,7 @@ export class WalletDiscovery {
       const fromStorage = await this.readCache();
       if (fromStorage) {
         this.cache = fromStorage;
+        this.scheduleIconPrefetch(fromStorage);
         return fromStorage;
       }
     }
@@ -56,10 +60,42 @@ export class WalletDiscovery {
 
     this.fetchPromise = this.fetchAndCache();
     try {
-      return await this.fetchPromise;
+      const wallets = await this.fetchPromise;
+      this.scheduleIconPrefetch(wallets);
+      return wallets;
     } finally {
       this.fetchPromise = null;
     }
+  }
+
+  /** Cancel in-flight icon prefetches (e.g. bridge.destroy). */
+  cancelPrefetch(): void {
+    try {
+      this.prefetchController?.abort();
+    } catch {
+      /* ignore */
+    }
+    this.prefetchController = null;
+  }
+
+  /**
+   * Warm HTTP cache for wallet icons. Non-blocking; safe to call repeatedly.
+   * Deduped + concurrency-limited inside prefetchImages.
+   */
+  private scheduleIconPrefetch(wallets: WalletInfo[]): void {
+    if (typeof window === 'undefined' || wallets.length === 0) return;
+
+    try {
+      this.prefetchController?.abort();
+    } catch {
+      /* ignore */
+    }
+    const ac = new AbortController();
+    this.prefetchController = ac;
+
+    const urls = collectWalletImageUrls(wallets);
+    // Detached promise — errors must not surface to callers
+    void prefetchImages(urls, { signal: ac.signal }).catch(() => undefined);
   }
 
   async getWalletByAppName(appName: string): Promise<WalletInfo | null> {
@@ -106,7 +142,7 @@ export class WalletDiscovery {
       if (Date.now() - parsed.fetchedAt > CACHE_TTL_MS) {
         return null;
       }
-
+      // Re-validate cached entries
       return parseWalletsRegistry(parsed.wallets, 'cache');
     } catch {
       return null;
@@ -122,6 +158,8 @@ export class WalletDiscovery {
         wallets,
       };
       await this.storage.setItem(STORAGE_KEYS.WALLETS_CACHE, JSON.stringify(payload));
-    } catch {}
+    } catch {
+      // non-critical
+    }
   }
 }

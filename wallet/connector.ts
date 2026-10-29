@@ -1,6 +1,6 @@
 /**
  * TBridge — main SDK entry (framework-agnostic).
- * HTTP restore, signData, rate limiting, origin-bound sessions,
+ * Phase 2: HTTP restore, signData, rate limiting, origin-bound sessions,
  * bridge health events, parallel discovery.
  */
 
@@ -196,6 +196,7 @@ export class TBridge {
     this.setStatus({ status: 'connecting' });
 
     try {
+      // Parallel: wallets list + nothing else blocking
       const wallets = await this.discovery.getWallets();
       const connectRequest = this.buildConnectRequest(options.tonProofPayload);
 
@@ -277,7 +278,9 @@ export class TBridge {
           this.pendingConnectCleanup = () => {
             try {
               httpSession.destroy();
-            } catch {}
+            } catch {
+              /* ignore */
+            }
           };
         },
       });
@@ -320,7 +323,9 @@ export class TBridge {
     if (!this.connecting && !this.pendingConnectCleanup) return;
     try {
       this.pendingConnectCleanup?.();
-    } catch {}
+    } catch {
+      /* ignore */
+    }
     this.pendingConnectCleanup = null;
     this.teardownSession();
     this.connecting = false;
@@ -342,6 +347,7 @@ export class TBridge {
     try {
       const wallets = await this.discovery.getWallets();
 
+      // 1. Injected JS bridge — fastest path (Telegram Mini-App etc.)
       const injected = detectInjectedWallet(wallets);
       if (injected) {
         const restored = await restoreJsBridge({
@@ -358,6 +364,7 @@ export class TBridge {
         }
       }
 
+      // 2. Persisted HTTP session
       const persisted = await loadPersistedSession(this.storage);
       if (!persisted?.secretKeyHex || !persisted.bridgeUrl || !persisted.walletClientId) {
         return this.status;
@@ -507,8 +514,15 @@ export class TBridge {
     // Release runtime resources only — do NOT clear persisted session
     // (reload / remount can restore). Use disconnect() to end the session.
     try {
+      this.discovery.cancelPrefetch();
+    } catch {
+      /* ignore */
+    }
+    try {
       this.pendingConnectCleanup?.();
-    } catch {}
+    } catch {
+      /* ignore */
+    }
     this.pendingConnectCleanup = null;
     this.connecting = false;
     this.restoring = false;
@@ -516,6 +530,8 @@ export class TBridge {
     this.emitter.removeAllListeners();
     this.setStatus({ status: 'disconnected' });
   }
+
+  // -----------------------------------------------------------------------
 
   private createHttpHooks() {
     return {
@@ -588,7 +604,9 @@ export class TBridge {
     if (this.session) {
       try {
         this.session.destroy();
-      } catch {}
+      } catch {
+        /* ignore */
+      }
       this.session = null;
     }
     if (this.sessionCrypto) {
