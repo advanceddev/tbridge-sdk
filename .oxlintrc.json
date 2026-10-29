@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "pedantic": "off",
+    "style": "off",
+    "restriction": "off"
+  },
+  "rules": {
+    "typescript/no-unused-vars": "error",
+    "eslint/no-unused-vars": "error",
+    "eslint/no-debugger": "error",
+    "eslint/no-eval": "error",
+    "eslint/eqeqeq": "error",
+    "unicorn/no-useless-undefined": "off"
+  },
+  "ignorePatterns": ["dist/**", "node_modules/**", "coverage/**", "**/*.d.ts"]
+}

@@ -1,0 +1,78 @@
+{
+  "name": "@tbridge/sdk",
+  "version": "0.3.0",
+  "private": false,
+  "description": "Enterprise pure TypeScript TON wallet connector SDK for the browser",
+  "keywords": [
+    "bridge",
+    "mini-app",
+    "sdk",
+    "tbridge",
+    "telegram",
+    "ton",
+    "wallet",
+    "web3"
+  ],
+  "homepage": "https://github.com/advanceddev/tbridge-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/advanceddev/tbridge-sdk/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Ivan Lomovtcev",
+    "url": "https://github.com/advanceddev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/advanceddev/tbridge-sdk.git"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/tbridge.cjs",
+  "module": "./dist/tbridge.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/tbridge.js",
+      "require": "./dist/tbridge.cjs"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint . --fix",
+    "fmt": "oxfmt .",
+    "fmt:check": "oxfmt --check .",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "prebuild": "pnpm typecheck && pnpm lint"
+  },
+  "dependencies": {
+    "qr": "^0.5.0",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.2",
+    "@typescript/typescript6": "npm:typescript@~6.0.0",
+    "oxfmt": "^0.75.0",
+    "oxlint": "^1.90.0",
+    "typescript": "~7.0.2",
+    "unplugin-dts": "^1.1.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
