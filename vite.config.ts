@@ -15,9 +15,9 @@ export default defineConfig({
     },
     outDir: 'dist',
     emptyOutDir: true,
-    sourcemap: true,
+    sourcemap: false,
     minify: 'oxc',
-    target: 'es2022',
+    target: 'es2023',
     rolldownOptions: {
       output: {
         exports: 'named',
