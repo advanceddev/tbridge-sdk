@@ -80,13 +80,13 @@ bridge.on('statusChange', (status) => {
   console.log('status', status);
 });
 
-// Send TON
+// Send GRAM
 await bridge.sendTransaction({
   validUntil: Math.floor(Date.now() / 1000) + 300,
   messages: [
     {
       address: 'EQ...',
-      amount: '100000000', // nanotons
+      amount: '100000000', // nano
     },
   ],
 });
