@@ -24,7 +24,7 @@ body.tbridge-scroll-lock {
   --tb-faint: #71717a;
   --tb-surface: rgba(255, 255, 255, 0.06);
   --tb-surface-2: rgba(255, 255, 255, 0.1);
-  --tb-accent: #3b82f6;
+  --tb-accent: #0098EA;
   --tb-danger: #f87171;
   --tb-scrim: rgba(0, 0, 0, 0.6);
   --tb-qr-bg: #ffffff;
@@ -50,7 +50,7 @@ body.tbridge-scroll-lock {
   --tb-faint: #71717a;
   --tb-surface: rgba(0, 0, 0, 0.04);
   --tb-surface-2: rgba(0, 0, 0, 0.08);
-  --tb-accent: #2563eb;
+  --tb-accent: #0098EA;
   --tb-danger: #dc2626;
   --tb-scrim: rgba(15, 15, 20, 0.4);
   --tb-qr-bg: #ffffff;
@@ -63,6 +63,7 @@ body.tbridge-scroll-lock {
   }
 }
 
+/* Wrapper содержит модалку + кнопки (на десктопе) */
 .tbridge-modal-wrapper {
   position: relative;
   display: flex;
@@ -79,6 +80,7 @@ body.tbridge-scroll-lock {
   }
 }
 
+/* Контейнер кнопок справа от модалки (только десктоп) */
 .tbridge-buttons {
   display: none;
 }
@@ -92,6 +94,7 @@ body.tbridge-scroll-lock {
   }
 }
 
+/* Модальное окно */
 .tbridge-modal {
   width: 100%;
   max-height: min(88vh, 640px);
@@ -122,6 +125,7 @@ body.tbridge-scroll-lock {
   to { transform: scale(1) translateY(0); opacity: 1; }
 }
 
+/* Хэдер */
 .tbridge-header {
   display: flex;
   align-items: center;
@@ -150,6 +154,7 @@ body.tbridge-scroll-lock {
   color: var(--tb-fg);
 }
 
+/* Кнопки Назад и Закрыть */
 .tbridge-back,
 .tbridge-close {
   appearance: none;
@@ -179,6 +184,7 @@ body.tbridge-scroll-lock {
   transform: scale(0.92);
 }
 
+/* Десктоп: кнопки увеличены и вынесены за модалку */
 @media (min-width: 520px) {
   .tbridge-back,
   .tbridge-close {
@@ -189,6 +195,7 @@ body.tbridge-scroll-lock {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   }
   
+  /* Фикс: используем непрозрачный цвет при наведении */
   .tbridge-back:hover,
   .tbridge-close:hover {
     background: var(--tb-icon-bg);
@@ -200,6 +207,149 @@ body.tbridge-scroll-lock {
   }
 }
 
+/* Mobile header end: about + close */
+.tbridge-header-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Outline logo about button */
+.tbridge-about-btn {
+  appearance: none;
+  background: var(--tb-surface);
+  border: none;
+  color: var(--tb-muted);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  padding: 0;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.tbridge-about-btn svg {
+  display: block;
+}
+
+.tbridge-about-btn:hover {
+  color: #0098EA;
+  background: rgba(0, 152, 234, 0.08);
+}
+
+.tbridge-about-btn:active {
+  transform: scale(0.92);
+}
+
+@media (min-width: 520px) {
+  .tbridge-about-btn {
+    width: 40px;
+    height: 40px;
+    background: var(--tb-bg);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  .tbridge-about-btn:hover {
+    background: var(--tb-icon-bg);
+  }
+}
+
+/* Footer wordmark (display merged with .tbridge-footer below) */
+
+.tbridge-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--tb-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+.tbridge-wordmark-text {
+  color: var(--tb-faint);
+}
+
+/* About popup above modal */
+.tbridge-about-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: rgba(0, 0, 0, 0.45);
+  box-sizing: border-box;
+  animation: tbridge-fade-in 0.18s ease;
+}
+
+.tbridge-about-scrim[hidden] {
+  display: none !important;
+}
+
+.tbridge-about-card {
+  position: relative;
+  width: min(100%, 320px);
+  background: var(--tb-bg);
+  color: var(--tb-fg);
+  border-radius: 20px;
+  padding: 28px 20px 24px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.tbridge-about-close {
+  appearance: none;
+  border: 0;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--tb-surface);
+  color: var(--tb-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.tbridge-about-close:hover {
+  background: var(--tb-surface-2);
+  color: var(--tb-fg);
+}
+
+.tbridge-about-logo {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.tbridge-about-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--tb-fg);
+}
+
+.tbridge-about-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--tb-muted);
+}
+
+/* Тело модалки */
 .tbridge-body {
   overflow-x: hidden;
   overflow-y: auto;
@@ -219,6 +369,7 @@ body.tbridge-scroll-lock {
   display: none;
 }
 
+/* Сетка кошельков */
 .tbridge-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -320,9 +471,13 @@ body.tbridge-scroll-lock {
   grid-column: 1 / -1;
 }
 
+/* Футер */
 .tbridge-footer {
   flex-shrink: 0;
-  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 8px 12px;
   text-align: center;
   font-size: 11px;
   font-weight: 500;
@@ -331,6 +486,7 @@ body.tbridge-scroll-lock {
   user-select: none;
 }
 
+/* Кнопка подключения */
 .tbridge-btn {
   appearance: none;
   border: 0;
@@ -357,6 +513,7 @@ body.tbridge-scroll-lock {
   cursor: not-allowed;
 }
 
+/* Экран ожидания */
 .tbridge-waiting {
   display: flex;
   flex-direction: column;
@@ -431,6 +588,7 @@ body.tbridge-scroll-lock {
   color: var(--tb-danger) !important;
 }
 
+/* Спиннер (без белого фона) */
 .tbridge-spinner-wrap {
   width: 200px;
   height: 200px;
@@ -454,6 +612,7 @@ body.tbridge-scroll-lock {
   to { transform: rotate(360deg); }
 }
 
+/* QR код */
 .tbridge-qr {
   width: 200px;
   height: 200px;
@@ -464,6 +623,7 @@ body.tbridge-scroll-lock {
   display: block;
 }
 
+/* Ссылка открытия */
 .tbridge-open-link {
   appearance: none;
   border: 0;
@@ -490,6 +650,7 @@ body.tbridge-scroll-lock {
   transform: scale(0.98);
 }
 
+/* Кнопка копирования */
 .tbridge-copy-link {
   appearance: none;
   border: 0;

@@ -3,20 +3,22 @@
  *
  * Priority:
  * 1. HTTPS/HTTP universal link when available
- * 2. Inside Telegram Mini App:
- *    - t.me → `web_app_open_tg_link`
- *    - other http(s) → `web_app_open_link` (external browser / in-app browser)
- * 3. Custom schemes only if primary is not http(s)
+ * 2. Real Telegram Mini App only:
+ *    - t.me → web_app_open_tg_link
+ *    - other http(s) → web_app_open_link / WebApp.openLink
+ * 3. Telegram in-app browser & mobile web → window.open / <a target=_blank> (keep page + SSE)
+ * 4. Custom schemes only if primary is not http(s)
  *
- * Docs:
- * https://core.telegram.org/api/web-events#web-app-open-link
- * https://core.telegram.org/api/web-events#web-app-open-tg-link
+ * Why Mini App vs in-app browser matters:
+ * Telegram's embedded browser may expose a stub Telegram.WebApp. Calling
+ * web_app_open_link there reports success but does nothing. window.open is
+ * often blocked. Programmatic <a> navigation is the reliable path.
  */
 
 import {
   detectRuntimeEnv,
   isIframeContext,
-  isTelegramClient,
+  isTelegramMiniApp,
   telegramWebAppVersion,
   versionAtLeast,
   type RuntimeEnv,
@@ -50,13 +52,7 @@ function isHttpUrl(href: string): boolean {
 
 function isTelegramHosted(href: string): boolean {
   const u = safeUrl(href);
-  return (
-    !!u &&
-    (u.hostname === 't.me' ||
-      u.hostname.endsWith('.t.me') ||
-      u.hostname.endsWith('.telegram.me') ||
-      u.hostname.endsWith('telegram.me'))
-  );
+  return !!u && (u.hostname === 't.me' || u.hostname.endsWith('.t.me'));
 }
 
 export function withReturnStrategy(href: string, strategy: ReturnStrategy): string {
@@ -87,23 +83,62 @@ export function resolveReturnStrategy(env: RuntimeEnv): ReturnStrategy {
   return 'back';
 }
 
-function defaultTarget(env: RuntimeEnv): LinkTarget {
-  if (env.host === 'desktop-web') return '_blank';
-  return '_self';
+function defaultTarget(_env: RuntimeEnv): LinkTarget {
+  // Always prefer a new browsing context so the dApp page (and its SSE)
+  // stays alive. Same-tab navigation kills EventSource and shows
+  // "SSE connection failed" after the user returns.
+  return '_blank';
 }
 
+/**
+ * Most reliable open under user gesture in restricted WebViews:
+ * synthetic <a> click, then window.open, then location.assign.
+ */
 export function openLink(href: string, target: LinkTarget = '_blank'): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.open(href, target, 'noopener,noreferrer');
-  } catch {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+  /**
+   * Never navigate the current document when opening wallet connect links.
+   * In Telegram in-app browser, location.assign / <a target=_self> leaves the
+   * dApp page, drops EventSource, and after Back the UI shows bridge errors.
+   * Prefer a new context; if that fails, leave the page alone (user still has
+   * "Open in wallet" / Copy).
+   */
+  const preserveDocument = target !== '_self';
+
+  // 1) window.open — best chance to keep current page
+  if (target === '_blank') {
     try {
-      if (target === '_self') {
-        window.location.href = href;
-      } else {
-        window.location.assign(href);
-      }
-    } catch {}
+      const win = window.open(href, '_blank', 'noopener,noreferrer');
+      if (win) return;
+    } catch {
+      /* continue */
+    }
+  }
+
+  // 2) Synthetic <a> with the requested target
+  try {
+    const a = document.createElement('a');
+    a.href = href;
+    a.target = target;
+    a.rel = 'noopener noreferrer';
+    a.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    if (preserveDocument) return;
+  } catch {
+    /* continue */
+  }
+
+  // 3) Same-document navigation — only when caller explicitly asked for _self
+  //    (e.g. rare custom-scheme attempts). Never for default wallet HTTPS opens.
+  if (!preserveDocument) {
+    try {
+      window.location.assign(href);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -119,38 +154,47 @@ function postTelegramEvent(eventType: string, eventData: object): boolean {
       w.TelegramWebviewProxy.postEvent(eventType, JSON.stringify(eventData));
       return true;
     }
-  } catch {}
+  } catch {
+    /* continue */
+  }
 
   try {
     if (w.external?.notify) {
       w.external.notify(JSON.stringify({ eventType, eventData }));
       return true;
     }
-  } catch {}
+  } catch {
+    /* continue */
+  }
 
+  // Do NOT postMessage to parent unless we are a real Mini App —
+  // in-app browser iframes would swallow the message silently.
   try {
-    if (isIframeContext()) {
+    if (isTelegramMiniApp() && isIframeContext()) {
       window.parent.postMessage(JSON.stringify({ eventType, eventData }), '*');
       return true;
     }
-  } catch {}
+  } catch {
+    /* continue */
+  }
 
   return false;
 }
 
-function canUseTelegramBridge(): boolean {
-  if (!isTelegramClient()) return false;
+function canUseMiniAppBridge(): boolean {
+  if (!isTelegramMiniApp()) return false;
   const ver = telegramWebAppVersion();
   return (
     isIframeContext() ||
     versionAtLeast(ver, '6.1') ||
-    !!(window as Window & { TelegramWebviewProxy?: unknown }).TelegramWebviewProxy
+    !!(window as Window & { TelegramWebviewProxy?: unknown }).TelegramWebviewProxy ||
+    !!(window as Window & { Telegram?: { WebApp?: { openLink?: unknown } } }).Telegram?.WebApp
+      ?.openLink
   );
 }
 
 /**
- * t.me / telegram deep paths inside Mini App.
- * @see https://core.telegram.org/api/web-events#web-app-open-tg-link
+ * t.me links inside a real Mini App.
  */
 function openTelegramHostedLink(href: string, target: LinkTarget): boolean {
   const u = safeUrl(href);
@@ -158,7 +202,7 @@ function openTelegramHostedLink(href: string, target: LinkTarget): boolean {
 
   const pathFull = `${u.pathname}${u.search}${u.hash}`;
 
-  if (canUseTelegramBridge()) {
+  if (canUseMiniAppBridge()) {
     if (postTelegramEvent('web_app_open_tg_link', { path_full: pathFull })) {
       return true;
     }
@@ -169,12 +213,15 @@ function openTelegramHostedLink(href: string, target: LinkTarget): boolean {
 }
 
 /**
- * External http(s) links inside Mini App (Tonkeeper, MyTonWallet, etc.).
- * Must use web_app_open_link — window.open is unreliable in Telegram WebViews.
- * @see https://core.telegram.org/api/web-events#web-app-open-link
+ * External http(s) inside a real Mini App only.
+ * Always fall back to openLink if bridge is unavailable — never claim success
+ * without a real Mini App session.
  */
-function openExternalLinkInTelegram(href: string, target: LinkTarget): boolean {
-  if (!isHttpUrl(href)) return false;
+function openExternalLinkInMiniApp(href: string, target: LinkTarget): boolean {
+  if (!isHttpUrl(href) || !isTelegramMiniApp()) {
+    openLink(href, target);
+    return true;
+  }
 
   try {
     const webApp = (
@@ -184,13 +231,16 @@ function openExternalLinkInTelegram(href: string, target: LinkTarget): boolean {
         };
       }
     ).Telegram?.WebApp;
+
     if (typeof webApp?.openLink === 'function') {
       webApp.openLink(href, { try_instant_view: false });
       return true;
     }
-  } catch {}
+  } catch {
+    /* continue */
+  }
 
-  if (canUseTelegramBridge()) {
+  if (canUseMiniAppBridge()) {
     if (
       postTelegramEvent('web_app_open_link', {
         url: href,
@@ -222,29 +272,32 @@ export function openWalletLink(universalLink: string, options: OpenWalletLinkOpt
   const deep = options.deepLink ? withReturnStrategy(options.deepLink, ret) : undefined;
   const target = options.target ?? defaultTarget(env);
 
+  // 1) Primary is http(s)
   if (isHttpUrl(primary)) {
-    if (env.host === 'tma') {
+    if (env.host === 'tma' && isTelegramMiniApp()) {
       if (isTelegramHosted(primary)) {
         openTelegramHostedLink(primary, target);
         return;
       }
-
-      openExternalLinkInTelegram(primary, target);
+      openExternalLinkInMiniApp(primary, target);
       return;
     }
+    // mobile-web, desktop-web, Telegram in-app browser → normal navigation
     openLink(primary, target);
     return;
   }
 
+  // 2) Primary is not http(s). Prefer deepLink if it is http(s).
   if (deep && isHttpUrl(deep)) {
-    if (env.host === 'tma') {
-      openExternalLinkInTelegram(deep, target);
+    if (env.host === 'tma' && isTelegramMiniApp()) {
+      openExternalLinkInMiniApp(deep, target);
       return;
     }
     openLink(deep, target);
     return;
   }
 
+  // 3) Custom scheme only when nothing better exists
   if (deep && !options.forceUniversal) {
     openLink(deep, '_self');
     return;
@@ -263,15 +316,32 @@ export interface LinkHandoff {
 }
 
 /**
- * Reserve a browsing context under the active user gesture (mobile-web).
- * Inside TMA the Mini App bridge does not need a blank window.
+ * Reserve a browsing context under the active user gesture (mobile-web only).
+ *
+ * Skipped when:
+ * - not mobile-web (desktop uses QR; Mini App uses web_app_*)
+ * - Telegram in-app browser / any Telegram client shell — window.open('about:blank')
+ *   leaves a blank tab and confuses the WebView; open the real URL via openLink instead
  */
 export function createLinkHandoff(env = detectRuntimeEnv()): LinkHandoff {
   let placeholder: Window | null = null;
 
-  if (env.host === 'mobile-web') {
+  const allowPlaceholder =
+    env.host === 'mobile-web' && !env.isTelegramClient && !env.isTelegramMiniApp;
+
+  if (allowPlaceholder) {
     try {
-      placeholder = window.open('about:blank', '_blank');
+      const win = window.open('about:blank', '_blank');
+      // Some WebViews return a window that is immediately unusable
+      if (win && !win.closed) {
+        placeholder = win;
+      } else if (win) {
+        try {
+          win.close();
+        } catch {
+          /* ignore */
+        }
+      }
     } catch {
       placeholder = null;
     }
@@ -291,7 +361,9 @@ export function createLinkHandoff(env = detectRuntimeEnv()): LinkHandoff {
         } catch {
           try {
             placeholder?.close();
-          } catch {}
+          } catch {
+            /* ignore */
+          }
           placeholder = null;
         }
       }
@@ -302,7 +374,9 @@ export function createLinkHandoff(env = detectRuntimeEnv()): LinkHandoff {
       if (placeholder && !placeholder.closed) {
         try {
           placeholder.close();
-        } catch {}
+        } catch {
+          /* ignore */
+        }
       }
       placeholder = null;
     },

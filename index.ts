@@ -47,6 +47,7 @@ export { connectWithUi, type ConnectWithUiOptions } from './ui/connect-ui';
 export { openWalletModal, createConnectButton } from './ui/modal';
 export type { WalletModalOptions, WalletModalHandle } from './ui/modal';
 export { ensureStyles, removeStyles } from './ui/styles';
+export { createLogoSvg, createLogoWordmark, TBRIDGE_BRAND_COLOR } from './ui/logo';
 export { t, normalizeLocale, type TBridgeLocale } from './ui/i18n';
 export { normalizeTheme, type TBridgeTheme } from './ui/theme';
 
@@ -59,6 +60,7 @@ export {
 export {
   detectRuntimeEnv,
   isTelegramClient,
+  isTelegramMiniApp,
   isMobileOs,
   type RuntimeEnv,
   type HostKind,

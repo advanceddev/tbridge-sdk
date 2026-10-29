@@ -8,6 +8,7 @@ import { ensureStyles } from './styles';
 import { t, type TBridgeLocale } from './i18n';
 import type { TBridgeTheme } from './theme';
 import { openWalletLink } from '../utils/open-wallet-link';
+import { createLogoSvg, createLogoWordmark, TBRIDGE_BRAND_COLOR } from './logo';
 
 export interface WalletModalOptions {
   wallets: WalletInfo[];
@@ -97,17 +98,70 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
   header.append(headerStart);
 
   const body = el('div', 'tbridge-body');
-  const footer = el('div', 'tbridge-footer', t(locale, 'modal.powered'));
+  const footer = el('div', 'tbridge-footer');
+  footer.appendChild(
+    createLogoWordmark({ size: 22, color: TBRIDGE_BRAND_COLOR, className: 'tbridge-wordmark' }),
+  );
 
   modal.append(header, body, footer);
   wrapper.append(modal);
   overlay.append(wrapper);
 
+  // About button (outline logo) — desktop: under close; mobile: left of close in header
+  const aboutBtn = el('button', 'tbridge-about-btn') as HTMLButtonElement;
+  aboutBtn.type = 'button';
+  aboutBtn.appendChild(createLogoSvg({ outline: false, size: 18, color: TBRIDGE_BRAND_COLOR }));
+
+  // About popup (stacked above the wallet modal)
+  const aboutScrim = el('div', 'tbridge-about-scrim');
+  aboutScrim.setAttribute('hidden', '');
+  aboutScrim.setAttribute('aria-hidden', 'true');
+  const aboutCard = el('div', 'tbridge-about-card');
+  aboutCard.setAttribute('role', 'dialog');
+  aboutCard.setAttribute('aria-modal', 'true');
+  const aboutClose = el('button', 'tbridge-about-close', '×') as HTMLButtonElement;
+  aboutClose.type = 'button';
+  const aboutLogoWrap = el('div', 'tbridge-about-logo');
+  aboutLogoWrap.appendChild(
+    createLogoSvg({ outline: false, size: 40, color: TBRIDGE_BRAND_COLOR }),
+  );
+  const aboutTitle = el('h3', 'tbridge-about-title', t(locale, 'about.title'));
+  const aboutBody = el('p', 'tbridge-about-body', t(locale, 'about.body'));
+  aboutCard.append(aboutClose, aboutLogoWrap, aboutTitle, aboutBody);
+  aboutScrim.append(aboutCard);
+  overlay.append(aboutScrim);
+
+  const openAbout = (): void => {
+    aboutScrim.removeAttribute('hidden');
+    aboutScrim.setAttribute('aria-hidden', 'false');
+    aboutClose.focus();
+  };
+
+  const closeAbout = (): void => {
+    aboutScrim.setAttribute('hidden', '');
+    aboutScrim.setAttribute('aria-hidden', 'true');
+  };
+
+  aboutBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openAbout();
+  });
+  aboutClose.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAbout();
+  });
+  aboutScrim.addEventListener('click', (e) => {
+    if (e.target === aboutScrim) closeAbout();
+  });
+
   if (isDesktop()) {
-    buttonsContainer.append(closeBtn);
+    buttonsContainer.append(closeBtn, aboutBtn);
     wrapper.append(buttonsContainer);
   } else {
-    header.append(closeBtn);
+    // Mobile: about left of close in header
+    const headerEnd = el('div', 'tbridge-header-end');
+    headerEnd.append(aboutBtn, closeBtn);
+    header.append(headerEnd);
   }
 
   let closed = false;
@@ -126,12 +180,15 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
   const syncA11y = (): void => {
     overlay.setAttribute('aria-label', title.textContent || 'Connect wallet');
     closeBtn.setAttribute('aria-label', t(locale, 'modal.close'));
+    aboutBtn.setAttribute('aria-label', t(locale, 'modal.about'));
+    aboutClose.setAttribute('aria-label', t(locale, 'about.close'));
+    aboutTitle.textContent = t(locale, 'about.title');
+    aboutBody.textContent = t(locale, 'about.body');
+    aboutCard.setAttribute('aria-label', t(locale, 'about.title'));
 
     if (backBtn) {
       backBtn.setAttribute('aria-label', t(locale, 'modal.back'));
     }
-
-    footer.textContent = t(locale, 'modal.powered');
   };
 
   syncA11y();
@@ -156,6 +213,10 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
 
   onKey = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') {
+      if (!aboutScrim.hasAttribute('hidden')) {
+        closeAbout();
+        return;
+      }
       close();
     }
   };
@@ -405,7 +466,9 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
                 }
               }, 1500);
             })
-            .catch(() => {});
+            .catch(() => {
+              // Clipboard may be unavailable in some browsers/contexts
+            });
         });
 
         body.append(copyBtn);
