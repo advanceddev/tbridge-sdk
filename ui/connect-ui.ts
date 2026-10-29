@@ -26,6 +26,7 @@ export interface ConnectWithUiOptions {
    * Default uses platform-aware openWalletLink / gesture handoff.
    */
   openLink?: (link: string, wallet: WalletInfo) => void;
+  /** Force QR even on mobile / TMA */
   preferQr?: boolean;
   locale?: TBridgeLocale;
   theme?: TBridgeTheme;
@@ -99,8 +100,11 @@ export async function connectWithUi(
         backRequested = false;
         const currentAttemptId = ++connectAttemptId;
 
+        // Desktop → QR; mobile & TMA → auto-launch (unless overridden)
         const preferQr = options.preferQr ?? shouldPreferQr(env);
 
+        // Reserve a browsing context under the active user gesture so that a
+        // link produced after the async bridge handshake can still navigate.
         handoff?.cancel();
         handoff = preferQr ? null : createLinkHandoff(env);
 
@@ -116,6 +120,9 @@ export async function connectWithUi(
                 return;
               }
 
+              // Auto-open wallet when not a pure QR-first desktop flow.
+              // QR is still rendered below so the user always has a scan fallback
+              // (e.g. redirect blocked, wrong device, or returned to the page).
               if (!preferQr) {
                 if (options.openLink) {
                   options.openLink(link, wallet);
@@ -131,17 +138,16 @@ export async function connectWithUi(
                 if (currentAttemptId !== connectAttemptId || settled || backRequested) {
                   return;
                 }
-                const qr = preferQr
-                  ? await renderQrToDataUrl(link, { logoUrl: wallet.image })
-                  : null;
+                // Always build QR for the waiting screen
+                const qr = await renderQrToDataUrl(link, { logoUrl: wallet.image });
                 if (currentAttemptId !== connectAttemptId || settled || backRequested) {
                   return;
                 }
-                const msg = preferQr
-                  ? qr
-                    ? t(locale, 'waiting.scan')
-                    : t(locale, 'waiting.open')
-                  : t(locale, 'waiting.confirm');
+                const msg = qr
+                  ? t(locale, 'waiting.scan')
+                  : preferQr
+                    ? t(locale, 'waiting.open')
+                    : t(locale, 'waiting.confirm');
                 modal?.setWaiting(msg, {
                   qrDataUrl: qr,
                   link,
