@@ -2,20 +2,32 @@
  * Persisted session helpers.
  * Origin-bound + max-age enforced at restore time in connector.
  *
- * Storage layout (security):
- * - localStorage SESSION: public metadata only (no secretKeyHex)
- * - sessionStorage SESSION_SECRET: HTTP session secret (tab-scoped)
+ * Default layout (durable across Mini App / tab close):
+ * - StorageAdapter (localStorage by default) holds the full session including
+ *   secretKeyHex — required for HTTP bridge restore after process death.
  *
- * Same-tab reload → restore works.
- * New tab / browser restart → secret absent → HTTP restore skipped (safe).
- * Custom StorageAdapter still holds public metadata; secret always uses
- * sessionStorage when available (never written to adapter / localStorage).
+ * Threat model: same-origin XSS can read localStorage. Mitigate with CSP on
+ * the host app. sessionStorage-only mode is available via options if a product
+ * prefers stricter volatility over UX.
  */
 
 import { PROTOCOL_VERSION, STORAGE_KEYS } from '../core/constants';
 import { safeJsonParse } from '../core/security';
 import type { StorageAdapter } from '../core/storage';
 import type { PersistedSession } from '../core/types';
+
+export type SessionPersistence = 'local' | 'session';
+
+let persistenceMode: SessionPersistence = 'local';
+
+/** Configure where HTTP session secrets live. Default: `local` (survives relaunch). */
+export function setSessionPersistence(mode: SessionPersistence): void {
+  persistenceMode = mode === 'session' ? 'session' : 'local';
+}
+
+export function getSessionPersistence(): SessionPersistence {
+  return persistenceMode;
+}
 
 function readSessionStorage(key: string): string | null {
   if (typeof window === 'undefined') return null;
@@ -30,19 +42,22 @@ function writeSessionStorage(key: string, value: string): void {
   if (typeof window === 'undefined') return;
   try {
     window.sessionStorage.setItem(key, value);
-  } catch {}
+  } catch {
+    /* private mode / quota */
+  }
 }
 
 function removeSessionStorage(key: string): void {
   if (typeof window === 'undefined') return;
   try {
     window.sessionStorage.removeItem(key);
-  } catch {}
+  } catch {
+    /* ignore */
+  }
 }
 
-/** Public fields only — strip secret before localStorage */
-function publicSession(session: PersistedSession): PersistedSession {
-  const { secretKeyHex: _secret, ...rest } = session;
+function stripSecret(session: PersistedSession): PersistedSession {
+  const { secretKeyHex: _s, ...rest } = session;
   return rest;
 }
 
@@ -56,25 +71,46 @@ export async function loadPersistedSession(
     if (data.version !== PROTOCOL_VERSION) return null;
     if (!data.account?.address || !data.walletAppName) return null;
 
-    let secret = readSessionStorage(STORAGE_KEYS.SESSION_SECRET);
+    if (persistenceMode === 'session') {
+      // Volatile: secret only from sessionStorage
+      let secret = readSessionStorage(STORAGE_KEYS.SESSION_SECRET);
+      if (!secret && typeof data.secretKeyHex === 'string' && data.secretKeyHex.length > 0) {
+        // Migrate legacy full blob → sessionStorage
+        secret = data.secretKeyHex;
+        writeSessionStorage(STORAGE_KEYS.SESSION_SECRET, secret);
+        try {
+          await storage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(stripSecret(data)));
+        } catch {
+          /* ignore */
+        }
+      }
+      if (secret) return { ...stripSecret(data), secretKeyHex: secret };
+      return stripSecret(data);
+    }
 
-    if (!secret && typeof data.secretKeyHex === 'string' && data.secretKeyHex.length > 0) {
-      secret = data.secretKeyHex;
-      writeSessionStorage(STORAGE_KEYS.SESSION_SECRET, secret);
+    // Durable (default): secret lives in the adapter blob (localStorage)
+    const secret =
+      (typeof data.secretKeyHex === 'string' && data.secretKeyHex.length > 0
+        ? data.secretKeyHex
+        : null) ?? readSessionStorage(STORAGE_KEYS.SESSION_SECRET);
 
+    // Promote sessionStorage secret into local blob once (upgrade path)
+    if (
+      secret &&
+      (!data.secretKeyHex || data.secretKeyHex.length === 0) &&
+      persistenceMode === 'local'
+    ) {
+      const merged = { ...data, secretKeyHex: secret };
       try {
-        await storage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(publicSession(data)));
-      } catch {}
+        await storage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(merged));
+      } catch {
+        /* ignore */
+      }
+      return merged;
     }
 
-    if (secret) {
-      return { ...publicSession(data), secretKeyHex: secret };
-    }
-
-    // Metadata without secret — HTTP restore impossible; return null for HTTP path
-    // Caller checks secretKeyHex. Returning data without secret would break restore
-    // guards; keep null when secret is required by callers.
-    return { ...publicSession(data) };
+    if (secret) return { ...data, secretKeyHex: secret };
+    return data;
   } catch {
     return null;
   }
@@ -85,12 +121,18 @@ export async function savePersistedSession(
   session: PersistedSession,
 ): Promise<void> {
   const secret = session.secretKeyHex;
-  if (secret) {
-    writeSessionStorage(STORAGE_KEYS.SESSION_SECRET, secret);
-  } else {
-    removeSessionStorage(STORAGE_KEYS.SESSION_SECRET);
+
+  if (persistenceMode === 'session') {
+    if (secret) writeSessionStorage(STORAGE_KEYS.SESSION_SECRET, secret);
+    else removeSessionStorage(STORAGE_KEYS.SESSION_SECRET);
+    await storage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(stripSecret(session)));
+    return;
   }
-  await storage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(publicSession(session)));
+
+  // local (default): persist full session including secret
+  await storage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(session));
+  // Clear any leftover tab-scoped copy to avoid split-brain
+  removeSessionStorage(STORAGE_KEYS.SESSION_SECRET);
 }
 
 export async function clearPersistedSession(storage: StorageAdapter): Promise<void> {
