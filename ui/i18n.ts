@@ -16,7 +16,7 @@ const EN: Dict = {
   'modal.powered': 'TBridge',
   'modal.about': 'About TBridge',
   'about.title': 'TBridge',
-  'about.body': 'Browser SDK for connecting TON wallets - secure, fast, and framework-agnostic.',
+  'about.body': 'Browser SDK for connecting TON wallets — secure, fast, and framework-agnostic.',
   'about.close': 'Close',
   'waiting.preparing': 'Preparing connection…',
   'waiting.scan': 'Scan with your wallet',
@@ -26,6 +26,11 @@ const EN: Dict = {
   'waiting.openLink': 'Open in wallet',
   'waiting.copy': 'Copy link',
   'waiting.copied': 'Copied',
+  'action.confirmTelegram': 'Confirm in Telegram',
+  'action.confirmGram': 'Confirm in Gram Wallet',
+  'action.confirmGeneric': 'Confirm in your wallet',
+  'action.confirmNamed': 'Confirm in {name}',
+  'action.openWallet': 'Open wallet',
 };
 
 const RU: Dict = {
@@ -38,7 +43,7 @@ const RU: Dict = {
   'modal.about': 'О TBridge',
   'about.title': 'TBridge',
   'about.body':
-    'SDK для подключения TON-кошельков в браузере - безопасно, быстро и без привязки к фреймворку.',
+    'SDK для подключения TON-кошельков в браузере — безопасно, быстро и без привязки к фреймворку.',
   'about.close': 'Закрыть',
   'waiting.preparing': 'Подготовка подключения…',
   'waiting.scan': 'Отсканируйте кошельком',
@@ -48,6 +53,11 @@ const RU: Dict = {
   'waiting.openLink': 'Открыть в кошельке',
   'waiting.copy': 'Копировать ссылку',
   'waiting.copied': 'Скопировано',
+  'action.confirmTelegram': 'Подтвердите в Telegram',
+  'action.confirmGram': 'Подтвердите в Gram Wallet',
+  'action.confirmGeneric': 'Подтвердите в кошельке',
+  'action.confirmNamed': 'Подтвердите в {name}',
+  'action.openWallet': 'Открыть кошелёк',
 };
 
 const TABLES: Record<TBridgeLocale, Dict> = { en: EN, ru: RU };

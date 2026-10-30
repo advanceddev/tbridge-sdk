@@ -1,6 +1,6 @@
 /**
  * TBridge — main SDK entry (framework-agnostic).
- * Phase 2: HTTP restore, signData, rate limiting, origin-bound sessions,
+ * HTTP restore, signData, rate limiting, origin-bound sessions,
  * bridge health events, parallel discovery.
  */
 
@@ -49,6 +49,7 @@ import {
 import { WalletDiscovery } from './discovery';
 import { normalizeLocale, type TBridgeLocale } from '../ui/i18n';
 import { normalizeTheme, type TBridgeTheme } from '../ui/theme';
+import { showActionSheet, type ActionSheetHandle } from '../ui/action-sheet';
 import {
   clearPersistedSession,
   loadPersistedSession,
@@ -468,20 +469,53 @@ export class TBridge {
       })),
     };
 
-    const response = await this.session!.send({
-      method: 'sendTransaction',
-      params: [JSON.stringify(payload)],
-      id: this.nextId(),
+    const clientId =
+      this.sessionCrypto?.clientId ??
+      (this.session?.kind === 'http' ? this.session.clientId : '') ??
+      '';
+
+    let sheet: ActionSheetHandle | null = null;
+    let rejectCancel: ((err: TBridgeError) => void) | null = null;
+    const cancelPromise = new Promise<never>((_, reject) => {
+      rejectCancel = reject;
     });
 
-    if ('error' in response) {
-      throw mapWalletError(response.error.code, response.error.message);
+    if (this.session?.kind === 'http' && clientId) {
+      sheet = showActionSheet({
+        locale: this.locale,
+        theme: this.theme,
+        wallet: this.currentWallet,
+        clientId,
+        onCancel: () => {
+          rejectCancel?.(new TBridgeError('USER_REJECTED', 'User rejected the request'));
+        },
+      });
     }
 
-    const boc =
-      typeof response.result === 'string' ? response.result : String(response.result ?? '');
-    await this.bumpPersistedRpcId();
-    return { boc };
+    try {
+      const response = await Promise.race([
+        this.session!.send({
+          method: 'sendTransaction',
+          params: [JSON.stringify(payload)],
+          id: this.nextId(),
+        }),
+        cancelPromise,
+      ]);
+
+      sheet?.close();
+
+      if ('error' in response) {
+        throw mapWalletError(response.error.code, response.error.message);
+      }
+
+      const boc =
+        typeof response.result === 'string' ? response.result : String(response.result ?? '');
+      await this.bumpPersistedRpcId();
+      return { boc };
+    } catch (e) {
+      sheet?.close();
+      throw e;
+    }
   }
 
   /**

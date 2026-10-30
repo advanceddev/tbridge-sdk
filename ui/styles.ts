@@ -99,6 +99,7 @@ body.tbridge-scroll-lock {
   width: 100%;
   max-height: min(88vh, 640px);
   background: var(--tb-bg);
+  border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 24px 24px 0 0;
   box-shadow: 0 -12px 48px rgba(0, 0, 0, 0.35);
   display: flex;
@@ -112,6 +113,7 @@ body.tbridge-scroll-lock {
     min-width: 420px;
     width: auto;
     border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
     animation: tbridge-fade-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   }
 }
@@ -161,16 +163,22 @@ body.tbridge-scroll-lock {
   border: 0;
   background: var(--tb-surface);
   color: var(--tb-muted);
-  width: 32px;
-  height: 32px;
+  width: 42px;
+  height: 42px;
+  padding: 0;
   border-radius: 50%;
   cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
+  line-height: 0;
   display: grid;
   place-items: center;
   flex-shrink: 0;
   transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.tbridge-back svg,
+.tbridge-close svg {
+  display: block;
+  margin: auto;
 }
 
 .tbridge-back:hover,
@@ -193,6 +201,7 @@ body.tbridge-scroll-lock {
     font-size: 20px;
     background: var(--tb-bg);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.05);
   }
   
   /* Фикс: используем непрозрачный цвет при наведении */
@@ -215,30 +224,32 @@ body.tbridge-scroll-lock {
   flex-shrink: 0;
 }
 
-/* Outline logo about button */
+/* About button — same chrome as close/back, solid logo */
 .tbridge-about-btn {
   appearance: none;
+  border: 0;
   background: var(--tb-surface);
-  border: none;
   color: var(--tb-muted);
-  width: 32px;
-  height: 32px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   cursor: pointer;
   display: grid;
   place-items: center;
   flex-shrink: 0;
   padding: 0;
-  transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  line-height: 0;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
 
 .tbridge-about-btn svg {
   display: block;
+  margin: auto;
 }
 
 .tbridge-about-btn:hover {
-  color: #0098EA;
-  background: rgba(0, 152, 234, 0.08);
+  background: var(--tb-surface-2);
+  color: var(--tb-fg);
 }
 
 .tbridge-about-btn:active {
@@ -251,6 +262,7 @@ body.tbridge-scroll-lock {
     height: 40px;
     background: var(--tb-bg);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.05);
   }
 
   .tbridge-about-btn:hover {
@@ -263,7 +275,7 @@ body.tbridge-scroll-lock {
 .tbridge-wordmark {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   color: var(--tb-faint);
   font-size: 11px;
   font-weight: 600;
@@ -631,9 +643,9 @@ body.tbridge-scroll-lock {
   align-items: center;
   justify-content: center;
   margin-top: 2px;
-  padding: 12px 24px;
+  padding: 10px 18px;
   border-radius: 999px;
-  background: linear-gradient(135deg, var(--tb-accent) 0%, #0077B5 100%);
+  background: var(--tb-accent);
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -675,6 +687,197 @@ body.tbridge-scroll-lock {
   color: var(--tb-fg);
   background: var(--tb-surface);
 }
+
+
+/* —— Action sheet (TX confirm) —— */
+.tbridge-sheet-overlay {
+  --tb-bg: #0c0c0e;
+  --tb-fg: #f4f4f5;
+  --tb-muted: #a1a1aa;
+  --tb-surface: rgba(255, 255, 255, 0.06);
+  --tb-surface-2: rgba(255, 255, 255, 0.1);
+  --tb-icon-bg: #1a1a1e;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.35);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--tb-fg);
+  animation: tbridge-sheet-in 0.18s ease;
+}
+.tbridge-sheet-overlay[data-tbridge-theme="light"] {
+  --tb-bg: #fafafa;
+  --tb-fg: #18181b;
+  --tb-muted: #52525b;
+  --tb-surface: rgba(0, 0, 0, 0.04);
+  --tb-surface-2: rgba(0, 0, 0, 0.08);
+  --tb-icon-bg: #e4e4e7;
+}
+@keyframes tbridge-sheet-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.tbridge-sheet-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  max-width: 400px;
+  justify-content: center;
+}
+
+.tbridge-sheet {
+  flex: 1;
+  min-width: 0;
+  background: var(--tb-bg);
+  color: var(--tb-fg);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 22px;
+  padding: 16px;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.25);
+  box-sizing: border-box;
+  animation: tbridge-sheet-up 0.22s ease;
+}
+@keyframes tbridge-sheet-up {
+  from { transform: translateY(12px); opacity: 0.85; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@media (min-width: 520px) {
+  .tbridge-sheet-overlay {
+    padding: 24px;
+  }
+  .tbridge-sheet {
+    max-width: 360px;
+    flex: 0 1 360px;
+    border-radius: 22px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  }
+}
+
+.tbridge-sheet-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.tbridge-sheet-title {
+  margin: 0;
+  flex: 1;
+  font: 600 15px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--tb-fg);
+  text-align: left;
+  padding-top: 10px;
+}
+
+@media (min-width: 520px) {
+  .tbridge-sheet-title {
+    text-align: center;
+    padding-top: 0;
+    margin-bottom: 4px;
+  }
+  .tbridge-sheet-header {
+    margin-bottom: 12px;
+  }
+}
+
+/* Mobile: close inside header; desktop: external column */
+.tbridge-sheet-close {
+  appearance: none;
+  border: 0;
+  background: var(--tb-surface);
+  color: var(--tb-muted);
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  line-height: 0;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+.tbridge-sheet-close:hover {
+  background: var(--tb-surface-2);
+  color: var(--tb-fg);
+}
+.tbridge-sheet-close:active {
+  transform: scale(0.92);
+}
+.tbridge-sheet-close svg {
+  display: block;
+  margin: auto;
+}
+
+.tbridge-sheet-side {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+@media (min-width: 520px) {
+  .tbridge-sheet-header .tbridge-sheet-close {
+    display: none;
+  }
+  .tbridge-sheet-side {
+    display: flex;
+  }
+  .tbridge-sheet-side .tbridge-sheet-close {
+    width: 40px;
+    height: 40px;
+    background: var(--tb-bg);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .tbridge-sheet-side .tbridge-sheet-close:hover {
+    background: var(--tb-icon-bg);
+  }
+}
+
+.tbridge-sheet-open {
+  appearance: none;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 14px;
+  font: 600 14px/1.2 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  cursor: pointer;
+  /* Dark theme: dark surface + accent glow */
+  background: #1a1d24;
+  color: #f4f4f5;
+  box-shadow: 0 0 0 1px rgba(0, 152, 234, 0.25), 0 0 20px rgba(0, 152, 234, 0.22);
+  transition: filter 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+}
+.tbridge-sheet-open:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 0 0 1px rgba(0, 152, 234, 0.4), 0 0 24px rgba(0, 152, 234, 0.32);
+}
+.tbridge-sheet-open:active {
+  transform: scale(0.99);
+}
+.tbridge-sheet-overlay[data-tbridge-theme="light"] .tbridge-sheet-open {
+  background: #0098EA;
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(0, 152, 234, 0.28);
+}
+.tbridge-sheet-overlay[data-tbridge-theme="light"] .tbridge-sheet-open:hover {
+  filter: brightness(1.05);
+  box-shadow: 0 4px 14px rgba(0, 152, 234, 0.35);
+}
+
 `;
 
 export function ensureStyles(): void {

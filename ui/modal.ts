@@ -9,6 +9,7 @@ import { t, type TBridgeLocale } from './i18n';
 import type { TBridgeTheme } from './theme';
 import { openWalletLink } from '../utils/open-wallet-link';
 import { createLogoSvg, createLogoWordmark, TBRIDGE_BRAND_COLOR } from './logo';
+import { createBackIcon, createCloseIcon } from './icons';
 
 export interface WalletModalOptions {
   wallets: WalletInfo[];
@@ -89,8 +90,10 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
 
   const title = el('h2', 'tbridge-title', options.title ?? t(locale, 'modal.title'));
 
-  const closeBtn = el('button', 'tbridge-close', '×');
+  const closeBtn = el('button', 'tbridge-close') as HTMLButtonElement;
   closeBtn.type = 'button';
+  closeBtn.setAttribute('aria-label', t(locale, 'modal.close'));
+  closeBtn.appendChild(createCloseIcon(18));
 
   const buttonsContainer = el('div', 'tbridge-buttons');
 
@@ -107,7 +110,7 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
   wrapper.append(modal);
   overlay.append(wrapper);
 
-  // About button — desktop: under close; mobile: left of close in header
+  // About button (outline logo) — desktop: under close; mobile: left of close in header
   const aboutBtn = el('button', 'tbridge-about-btn') as HTMLButtonElement;
   aboutBtn.type = 'button';
   aboutBtn.appendChild(createLogoSvg({ outline: false, size: 18, color: TBRIDGE_BRAND_COLOR }));
@@ -119,8 +122,11 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
   const aboutCard = el('div', 'tbridge-about-card');
   aboutCard.setAttribute('role', 'dialog');
   aboutCard.setAttribute('aria-modal', 'true');
-  const aboutClose = el('button', 'tbridge-about-close', '×') as HTMLButtonElement;
+  const aboutClose = el('button', 'tbridge-about-close') as HTMLButtonElement;
   aboutClose.type = 'button';
+  aboutClose.setAttribute('aria-label', t(locale, 'about.close'));
+  aboutClose.appendChild(createCloseIcon(16));
+
   const aboutLogoWrap = el('div', 'tbridge-about-logo');
   aboutLogoWrap.appendChild(
     createLogoSvg({ outline: false, size: 40, color: TBRIDGE_BRAND_COLOR }),
@@ -158,7 +164,6 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
     buttonsContainer.append(closeBtn, aboutBtn);
     wrapper.append(buttonsContainer);
   } else {
-    // Mobile: about left of close in header
     const headerEnd = el('div', 'tbridge-header-end');
     headerEnd.append(aboutBtn, closeBtn);
     header.append(headerEnd);
@@ -297,9 +302,10 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
       return;
     }
 
-    const btn = el('button', 'tbridge-back', '<');
+    const btn = el('button', 'tbridge-back') as HTMLButtonElement;
     btn.type = 'button';
     btn.setAttribute('aria-label', t(locale, 'modal.back'));
+    btn.appendChild(createBackIcon(18));
 
     btn.addEventListener('click', () => {
       if (mode !== 'waiting') {
@@ -312,7 +318,6 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
       closeBtn.focus();
     });
 
-    // Размещаем кнопку "Назад" в зависимости от размера экрана
     if (isDesktop()) {
       buttonsContainer.append(btn);
     } else {
