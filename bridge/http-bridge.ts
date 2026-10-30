@@ -53,7 +53,11 @@ interface PendingRequest {
 }
 
 function normalizeBridgeUrl(url: string): string {
-  return url.replace(/\/+$/, '');
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return end === url.length ? url : url.slice(0, end);
 }
 
 function eventsUrl(bridgeUrl: string, clientId: string, lastEventId?: string): string {
