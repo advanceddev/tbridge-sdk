@@ -23,22 +23,17 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm build
 
-      - name: Force OIDC Auth
+      - name: Verify OIDC Authentication
         run: |
-          npm config delete //registry.npmjs.org/:_authToken
-          npm config delete _authToken
-          npm config list
-        env:
-          NODE_AUTH_TOKEN: ''
-          NPM_TOKEN: ''
-
-      - name: Debug OIDC Auth
-        run: npm whoami
+          echo "Checking npm auth status..."
+          npm whoami
+          # Если всё настроено верно, здесь ДОЛЖНО быть напечатано: github-actions
 
       - name: Publish to npm
         run: npm publish --access public --provenance --no-git-checks
