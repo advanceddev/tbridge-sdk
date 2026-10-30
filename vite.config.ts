@@ -10,8 +10,8 @@ export default defineConfig({
     lib: {
       entry: resolve(root, 'index.ts'),
       name: 'TBridge',
-      formats: ['es', 'cjs'],
-      fileName: (format) => (format === 'es' ? 'tbridge.js' : 'tbridge.cjs'),
+      formats: ['es'],
+      fileName: 'tbridge',
     },
     outDir: 'dist',
     emptyOutDir: true,

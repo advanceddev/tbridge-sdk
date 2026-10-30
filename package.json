@@ -33,14 +33,14 @@
   ],
   "type": "module",
   "sideEffects": false,
-  "main": "./dist/tbridge.cjs",
+  "main": "./dist/tbridge.js",
   "module": "./dist/tbridge.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/tbridge.js",
-      "require": "./dist/tbridge.cjs"
+      "default": "./dist/tbridge.js"
     }
   },
   "publishConfig": {
