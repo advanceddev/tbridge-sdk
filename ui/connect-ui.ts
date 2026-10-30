@@ -11,7 +11,7 @@ import { detectRuntimeEnv } from '../utils/runtime-env';
 import {
   createLinkHandoff,
   openWalletLink,
-  shouldPreferQr,
+  shouldAutoOpenConnectLink,
   type LinkHandoff,
 } from '../utils/open-wallet-link';
 import { openWalletModal, type WalletModalHandle } from './modal';
@@ -100,13 +100,13 @@ export async function connectWithUi(
         backRequested = false;
         const currentAttemptId = ++connectAttemptId;
 
-        // Desktop → QR; mobile & TMA → auto-launch (unless overridden)
-        const preferQr = options.preferQr ?? shouldPreferQr(env);
+        // Auto-open policy (mobile always; desktop only Telegram wallet in Telegram).
+        // options.preferQr === true forces QR-only (no auto-open).
+        const autoOpen = options.preferQr === true ? false : shouldAutoOpenConnectLink(env, wallet);
 
-        // Reserve a browsing context under the active user gesture so that a
-        // link produced after the async bridge handshake can still navigate.
+        // Reserve a browsing context under the active user gesture when we will open.
         handoff?.cancel();
-        handoff = preferQr ? null : createLinkHandoff(env);
+        handoff = autoOpen ? createLinkHandoff(env) : null;
 
         modal?.setWaiting(t(locale, 'waiting.preparing'), { wallet });
 
@@ -120,10 +120,9 @@ export async function connectWithUi(
                 return;
               }
 
-              // Auto-open wallet when not a pure QR-first desktop flow.
-              // QR is still rendered below so the user always has a scan fallback
-              // (e.g. redirect blocked, wrong device, or returned to the page).
-              if (!preferQr) {
+              // Auto-open when policy allows; desktop otherwise waits for "Open in wallet".
+              // QR is always rendered as a fallback.
+              if (autoOpen) {
                 if (options.openLink) {
                   options.openLink(link, wallet);
                 } else if (handoff) {
@@ -138,16 +137,15 @@ export async function connectWithUi(
                 if (currentAttemptId !== connectAttemptId || settled || backRequested) {
                   return;
                 }
-                // Always build QR for the waiting screen
                 const qr = await renderQrToDataUrl(link, { logoUrl: wallet.image });
                 if (currentAttemptId !== connectAttemptId || settled || backRequested) {
                   return;
                 }
                 const msg = qr
                   ? t(locale, 'waiting.scan')
-                  : preferQr
-                    ? t(locale, 'waiting.open')
-                    : t(locale, 'waiting.confirm');
+                  : autoOpen
+                    ? t(locale, 'waiting.confirm')
+                    : t(locale, 'waiting.open');
                 modal?.setWaiting(msg, {
                   qrDataUrl: qr,
                   link,

@@ -42,6 +42,11 @@ export {
   INJECTED_BRIDGE_PROP,
 } from './utils/browser';
 export { encodeQrMatrix, renderQrToDataUrl } from './utils/qr';
+export {
+  prefetchImages,
+  collectWalletImageUrls,
+  IMAGE_PREFETCH_CONCURRENCY,
+} from './utils/prefetch-images';
 
 export { connectWithUi, type ConnectWithUiOptions } from './ui/connect-ui';
 export { openWalletModal, createConnectButton } from './ui/modal';
@@ -56,6 +61,8 @@ export {
   withReturnStrategy,
   resolveReturnStrategy,
   shouldPreferQr,
+  shouldAutoOpenConnectLink,
+  isTelegramWalletIdentity,
 } from './utils/open-wallet-link';
 export {
   detectRuntimeEnv,

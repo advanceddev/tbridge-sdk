@@ -18,6 +18,7 @@
 import {
   detectRuntimeEnv,
   isIframeContext,
+  isMobileOs,
   isTelegramMiniApp,
   telegramWebAppVersion,
   versionAtLeast,
@@ -304,6 +305,53 @@ export function openWalletLink(universalLink: string, options: OpenWalletLinkOpt
   }
 
   openLink(primary, '_self');
+}
+
+/**
+ * Whether the connect UI should automatically open the wallet link.
+ *
+ * Policy:
+ * - Mobile OS / mobile-web: always auto-open (browser, Telegram in-app browser, mobile TMA)
+ * - Desktop: never auto-open, except Telegram wallet inside a Telegram client
+ *   (desktop Mini App or desktop Telegram shell) — remote wallets stay on QR + Open button
+ */
+export function shouldAutoOpenConnectLink(
+  env: RuntimeEnv,
+  wallet: { app_name?: string; name?: string; universal_url?: string; deepLink?: string },
+): boolean {
+  if (isMobileOs(env.os) || env.host === 'mobile-web') {
+    return true;
+  }
+
+  // Desktop (desktop-web or desktop Telegram Mini App)
+  if (isTelegramWalletIdentity(wallet) && (env.isTelegramMiniApp || env.isTelegramClient)) {
+    return true;
+  }
+
+  return false;
+}
+
+/** Heuristic: official Telegram Wallet / Wallet in Telegram */
+export function isTelegramWalletIdentity(wallet: {
+  app_name?: string;
+  name?: string;
+  universal_url?: string;
+  deepLink?: string;
+}): boolean {
+  const app = (wallet.app_name ?? '').toLowerCase();
+  const name = (wallet.name ?? '').toLowerCase();
+  if (app.includes('telegram') || name.includes('telegram')) return true;
+
+  const links = [wallet.universal_url, wallet.deepLink].filter(Boolean) as string[];
+  for (const href of links) {
+    try {
+      const u = new URL(href);
+      if (u.hostname === 't.me' || u.hostname.endsWith('.t.me')) return true;
+    } catch {
+      if (/^tg:\/\//i.test(href)) return true;
+    }
+  }
+  return false;
 }
 
 export function shouldPreferQr(env: RuntimeEnv = detectRuntimeEnv()): boolean {
