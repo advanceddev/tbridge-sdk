@@ -23,11 +23,19 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          registry-url: 'https://registry.npmjs.org'
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm build
+
+      - name: Force OIDC Auth
+        run: |
+          npm config delete //registry.npmjs.org/:_authToken
+          npm config delete _authToken
+          npm config list
+        env:
+          NODE_AUTH_TOKEN: ''
+          NPM_TOKEN: ''
 
       - name: Debug OIDC Auth
         run: npm whoami
