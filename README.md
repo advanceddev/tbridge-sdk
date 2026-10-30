@@ -1,30 +1,31 @@
 # TBridge SDK
 
-[![CI](https://github.com/advanceddev/tbridge-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/advanceddev/tbridge-sdk/actions/workflows/ci.yml)
+[![CI](https://github.com/advanceddev/tbridge-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/advanceddev/tbridge-sdk/actions/workflows/ci.yml) [![CodeQL](https://github.com/advanceddev/tbridge-sdk/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/advanceddev/tbridge-sdk/actions/workflows/github-code-scanning/codeql)
 
-**An blazing fast, enterprise-grade connector for TON wallets for the browser.**
+**A fast, enterprise-grade TON wallet connector for the browser.**
 
 ⚡ [Live demo](https://advanceddev.github.io/tbridge-demo-app/)
 
-TBridge is a pure TypeScript SDK for discovering wallets, establishing encrypted sessions, and requesting signatures / transfers on TON. It is framework-agnostic (React, Vue, Svelte, or vanilla), ships an optional vanilla UI, and is designed for production dApps and Telegram Mini Apps.
+TBridge is a pure TypeScript SDK for discovering wallets, establishing encrypted sessions, and requesting transfers / signatures on TON. It is framework-agnostic (React, Vue, Svelte, or vanilla), ships an optional vanilla UI, and is built for production dApps and **Telegram Mini Apps**.
 
-|              |                                        |
-| ------------ | -------------------------------------- |
-| **Package**  | `@tbridge/sdk`                         |
-| **Runtime**  | Browser only                           |
-| **Language** | TypeScript → ESM                       |
-| **Crypto**   | NaCl box via `tweetnacl` (overridable) |
-| **License**  | MIT                                    |
+|              |                                                              |
+| ------------ | ------------------------------------------------------------ |
+| **Package**  | [`@tbridge/sdk`](https://www.npmjs.com/package/@tbridge/sdk) |
+| **Runtime**  | Browser only                                                 |
+| **Language** | TypeScript → ESM                                             |
+| **Crypto**   | NaCl box via `tweetnacl` (overridable)                       |
+| **License**  | MIT                                                          |
 
 ---
 
 ## Why TBridge
 
-- **Protocol-complete** — injected JS bridge and remote HTTP/SSE bridge, connect / restore / disconnect, `sendTransaction`, `signData`
-- **Secure by default** — safe JSON parse, HTTPS manifest policy, origin-bound sessions, rate-limited RPC, secret keys in `sessionStorage` (not long-lived localStorage)
-- **TMA-aware** — correct open paths (`web_app_open_link` / `web_app_open_tg_link`), return strategies, mobile handoff
-- **UI included** — optional modal, wallet grid, QR, i18n (EN/RU), light/dark theme, inline CSS (no CSS framework)
-- **Minimal surface** — no React/Vue runtime dependency; host apps stay in control
+- **Protocol-complete** — injected JS bridge and remote HTTP/SSE bridge; connect, restore, disconnect, `sendTransaction`, `signData`
+- **Secure by default** — safe JSON parse, HTTPS manifest policy, origin-bound sessions, rate-limited RPC, AES-GCM at-rest storage for persisted data
+- **TMA-aware** — `web_app_open_link` / `web_app_open_tg_link` for real Mini Apps; safe fallbacks for Telegram in-app browser and mobile web
+- **Smart open policy** — auto-open on mobile; on desktop auto-open only for Telegram Wallet inside Telegram; otherwise QR + **Open in wallet**
+- **UI included** — modal, wallet grid, always-on QR, i18n (EN/RU), light/dark theme, branding, inline CSS
+- **Framework-agnostic** — no React/Vue runtime dependency
 
 ---
 
@@ -36,14 +37,14 @@ pnpm add @tbridge/sdk
 # or: yarn add @tbridge/sdk
 ```
 
-Peer environment: modern browser with `fetch`, `EventSource`, `crypto.getRandomValues`.  
-Node.js is **not** a runtime target (browser SDK only).
+Requires a modern browser with `fetch`, `EventSource`, and Web Crypto (`crypto.subtle` / `getRandomValues`).  
+**Not** a Node.js runtime library.
 
 ---
 
 ## Manifest
 
-Host a TON Connect–compatible manifest at a public HTTPS URL:
+Host a TON Connect–compatible manifest at a public **HTTPS** URL:
 
 ```json
 {
@@ -66,14 +67,13 @@ import { createTBridge, connectWithUi } from '@tbridge/sdk';
 
 const bridge = createTBridge({
   manifestUrl: 'https://your-app.example/tonconnect-manifest.json',
-  // Optional overrides:
-  // walletsRegistry: 'https://config.ton.org/wallets-v2.json',
-  // theme: 'dark',
-  // locale: 'en',
-  // network: 'mainnet',
+  // walletsRegistry: 'https://config.ton.org/wallets-v2.json', // optional override
+  locale: 'en', // 'en' | 'ru'
+  theme: 'dark', // 'dark' | 'light'
+  // sessionPersistence: 'local', // default — survives Mini App / tab close
 });
 
-// Restore previous session (same tab — secret lives in sessionStorage)
+// Restore previous HTTP session when possible
 await bridge.restoreConnection();
 
 if (!bridge.isConnected) {
@@ -81,24 +81,18 @@ if (!bridge.isConnected) {
 }
 
 bridge.on('statusChange', (status) => {
-  console.log('status', status);
+  console.log(status);
 });
 
-// Send GRAM
 await bridge.sendTransaction({
   validUntil: Math.floor(Date.now() / 1000) + 300,
-  messages: [
-    {
-      address: 'EQ...',
-      amount: '100000000', // nano
-    },
-  ],
+  messages: [{ address: 'EQ...', amount: '100000000' }],
 });
 
 await bridge.disconnect();
 ```
 
-### Without UI (headless)
+### Headless connect (no modal)
 
 ```ts
 const wallets = await bridge.getWallets();
@@ -107,7 +101,7 @@ const wallet = wallets.find((w) => w.app_name === 'tonkeeper');
 await bridge.connect({
   appName: wallet!.app_name,
   onConnectLink: (link) => {
-    // Open link yourself, or show your own QR
+    // Show your own QR / open logic
     window.open(link, '_blank', 'noopener,noreferrer');
   },
 });
@@ -115,10 +109,12 @@ await bridge.connect({
 
 ### Telegram Mini App
 
-No extra SDK is required. TBridge detects the Mini App environment and opens:
+No extra Telegram SDK is required. TBridge detects a **real** Mini App (`initData` / `tgWebApp*` params) and opens:
 
 - `t.me` links via `web_app_open_tg_link`
-- external wallet URLs (Tonkeeper, etc.) via `web_app_open_link`
+- external wallet HTTPS links via `web_app_open_link` / `Telegram.WebApp.openLink`
+
+Telegram **in-app browser** (not a Mini App) uses normal navigation helpers so the dApp page and SSE stay alive.
 
 ```ts
 await connectWithUi(bridge, {
@@ -136,38 +132,64 @@ bridge.setLocale('ru');
 
 ---
 
+## Connect UI behavior
+
+| Environment                                                | Auto-open wallet link                  | Waiting UI       |
+| ---------------------------------------------------------- | -------------------------------------- | ---------------- |
+| Mobile browser / Telegram in-app browser / mobile Mini App | Yes                                    | QR + Open + Copy |
+| Desktop (browser)                                          | No (use **Open in wallet** or scan QR) | QR + Open + Copy |
+| Desktop Telegram + **Telegram Wallet**                     | Yes                                    | QR + Open + Copy |
+
+Force QR-only (never auto-open):
+
+```ts
+await connectWithUi(bridge, { preferQr: true });
+```
+
+Wallet icons are prefetched in the background after registry load (HTTP cache warm-up). Modal icons use `loading="eager"`.
+
+---
+
 ## API overview
 
 ### `createTBridge(options)`
 
-| Option             | Required | Description                                                                   |
-| ------------------ | -------- | ----------------------------------------------------------------------------- |
-| `manifestUrl`      | yes      | HTTPS URL of your app manifest                                                |
-| `walletsRegistry`  | no       | Custom wallets JSON URL (strict-parsed). Default: official TON list           |
-| `storage`          | no       | Custom `StorageAdapter` (default: `localStorage` for public session metadata) |
-| `crypto`           | no       | Custom `CryptoProvider` (default: `tweetnacl`)                                |
-| `network`          | no       | `'mainnet'` \| `'testnet'`                                                    |
-| `requestTimeoutMs` | no       | RPC timeout                                                                   |
-| `sessionMaxAgeMs`  | no       | Max age for restore                                                           |
-| `theme`            | no       | `'light'` \| `'dark'`                                                         |
-| `locale`           | no       | `'en'` \| `'ru'`                                                              |
-| `debug`            | no       | Verbose safe logs (never secrets)                                             |
+| Option                  | Required | Description                                                         |
+| ----------------------- | -------- | ------------------------------------------------------------------- |
+| `manifestUrl`           | yes      | HTTPS URL of your app manifest                                      |
+| `walletsRegistry`       | no       | Custom wallets JSON URL (strict-parsed). Default: official TON list |
+| `storage`               | no       | Custom `StorageAdapter` (default: encrypted `localStorage`)         |
+| `crypto`                | no       | Custom `CryptoProvider` (default: `tweetnacl`)                      |
+| `network`               | no       | `'mainnet'` \| `'testnet'`                                          |
+| `requestTimeoutMs`      | no       | RPC timeout                                                         |
+| `sessionMaxAgeMs`       | no       | Max age for restore (default 7 days)                                |
+| `sessionPersistence`    | no       | `'local'` (default, durable) \| `'session'` (tab-scoped secret)     |
+| `theme`                 | no       | `'light'` \| `'dark'`                                               |
+| `locale`                | no       | `'en'` \| `'ru'`                                                    |
+| `debug`                 | no       | Safe debug logs (never secrets)                                     |
+| `allowInsecureManifest` | no       | Dev only — allow non-HTTPS manifest                                 |
 
 ### Instance methods
 
 | Method                                                   | Description                                                        |
 | -------------------------------------------------------- | ------------------------------------------------------------------ |
-| `restoreConnection()`                                    | Restore HTTP session if secret is available in this tab            |
+| `restoreConnection()`                                    | Restore HTTP session if persisted secret is available              |
 | `connect({ appName, onConnectLink?, tonProofPayload? })` | Connect to a wallet                                                |
-| `connectWithUi` (import)                                 | Full modal flow                                                    |
 | `disconnect()`                                           | End session and clear persisted data                               |
 | `destroy()`                                              | Release listeners / in-memory session (does **not** clear storage) |
-| `getWallets()`                                           | Parsed registry list                                               |
+| `getWallets()`                                           | Parsed registry list (triggers icon prefetch)                      |
 | `detectInjected()`                                       | Injected provider, if any                                          |
 | `sendTransaction(tx)`                                    | Request transfer                                                   |
 | `signData(payload)`                                      | Request data signature                                             |
-| `on` / `off` / `once`                                    | Events: `statusChange`, `bridgeHealth`, `disconnect`, …            |
+| `on` / `once`                                            | Events                                                             |
 | `setTheme` / `setLocale`                                 | UI preferences                                                     |
+| `getTheme` / `getLocale`                                 | Current UI preferences                                             |
+
+High-level UI:
+
+```ts
+import { connectWithUi, openWalletModal } from '@tbridge/sdk';
+```
 
 ### Events
 
@@ -179,7 +201,7 @@ bridge.on('bridgeHealth', (health) => {
   /* connected | reconnecting | offline */
 });
 bridge.on('disconnect', ({ reason }) => {
-  /* dapp | wallet */
+  /* wallet | local | session_expired | user_cancel */
 });
 ```
 
@@ -187,12 +209,27 @@ bridge.on('disconnect', ({ reason }) => {
 
 ## Security notes
 
-- **Session secret** is stored in **`sessionStorage`** (tab-scoped). Public session metadata may live in `localStorage`. Reload in the **same tab** can restore; a new tab cannot reuse the HTTP secret.
+- **Session persistence (default `local`)** — HTTP session material is stored via the storage adapter so Mini App / tab relaunch can restore. Use `sessionPersistence: 'session'` for stricter tab-scoped secrets (worse UX on close).
+- **At-rest encryption** — default `LocalStorageAdapter` stores values as AES-GCM blobs (`enc:v1:…`). Optional host secret: `globalThis.__TBRIDGE_STORAGE_SECRET__` (strong random string at bootstrap). Without it, the key is derived from the page origin — this **obfuscates** storage, it does **not** protect against same-origin XSS.
+- **Threat model** — treat XSS on the dApp origin as full session compromise. Enforce a strict **CSP** on the host app.
 - **Manifest URL** must be HTTPS outside localhost.
-- **Wallet icons** accept `https` only (http allowed on localhost).
+- **Wallet icons** — `https` only (http allowed on localhost).
 - **RPC** is rate-limited; bridge `fetch` uses `credentials: 'omit'`.
-- Protect the host app with a strict **CSP** — XSS can still read same-origin storage.
-- Do not enable `debug` in production builds if you prefer minimal console noise.
+- Call `disconnect()` on logout; `destroy()` only tears down the instance.
+
+---
+
+## Package
+
+```bash
+pnpm add @tbridge/sdk
+```
+
+```ts
+import { createTBridge, connectWithUi } from '@tbridge/sdk';
+```
+
+Repository: [advanceddev/tbridge-sdk](https://github.com/advanceddev/tbridge-sdk)
 
 ---
 
