@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       qr:
-        specifier: ^0.5.0
-        version: 0.5.5
+        specifier: ^0.7.2
+        version: 0.7.2
       tweetnacl:
         specifier: ^1.0.3
         version: 1.0.3
@@ -803,8 +803,8 @@ packages:
     resolution: {integrity: sha512-LJlKCCAUFKOuZxipUdYw1NzIITEsPcgyOG9LkvRJvuKj/bRzbuRY0ARXvL0pWGpsZvn8jku+LMep2eU0seHp8g==}
     engines: {node: ^10 || ^12 || >=14}
 
-  qr@0.5.5:
-    resolution: {integrity: sha512-iQBvKj7MRKO+co+MY0IZpyLO+ezvttxsmV86WywrgPuAmgBkv0pytyi03wourniSoPgzffeBW6cBgIkpqcvjTg==}
+  qr@0.7.2:
+    resolution: {integrity: sha512-yovYRuacJBJkG9fWSwcB2bKZhr58c04DpOXguDU+rAAoJZdi6/J3DtlomkKqdd1MutIptIK+kigWmT7LKz8y7A==}
     engines: {node: '>= 20.19.0'}
 
   quansync@0.2.11:
@@ -1486,7 +1486,7 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.2
 
-  qr@0.5.5: {}
+  qr@0.7.2: {}
 
   quansync@0.2.11: {}
 

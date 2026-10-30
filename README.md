@@ -1,6 +1,10 @@
-# TBridge
+# TBridge SDK
 
-**Enterprise-grade TON wallet connector for the browser.**
+[![CI](https://github.com/advanceddev/tbridge-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/advanceddev/tbridge-sdk/actions/workflows/ci.yml)
+
+**An blazing fast, enterprise-grade connector for TON wallets for the browser.**
+
+⚡ [Live demo](https://advanceddev.github.io/tbridge-demo-app/)
 
 TBridge is a pure TypeScript SDK for discovering wallets, establishing encrypted sessions, and requesting signatures / transfers on TON. It is framework-agnostic (React, Vue, Svelte, or vanilla), ships an optional vanilla UI, and is designed for production dApps and Telegram Mini Apps.
 
@@ -8,7 +12,7 @@ TBridge is a pure TypeScript SDK for discovering wallets, establishing encrypted
 | ------------ | -------------------------------------- |
 | **Package**  | `@tbridge/sdk`                         |
 | **Runtime**  | Browser only                           |
-| **Language** | TypeScript → ESM + CJS                 |
+| **Language** | TypeScript → ESM                       |
 | **Crypto**   | NaCl box via `tweetnacl` (overridable) |
 | **License**  | MIT                                    |
 
@@ -194,4 +198,4 @@ bridge.on('disconnect', ({ reason }) => {
 
 ## License
 
-MIT
+MIT © [Ivan Lomovtcev](https://telegram.me/frntbck)

@@ -14,7 +14,8 @@
     "eslint/no-debugger": "error",
     "eslint/no-eval": "error",
     "eslint/eqeqeq": "error",
-    "unicorn/no-useless-undefined": "off"
+    "unicorn/no-useless-undefined": "off",
+    "no-underscore-dangle": "off"
   },
   "ignorePatterns": ["dist/**", "node_modules/**", "coverage/**", "**/*.d.ts"]
 }
