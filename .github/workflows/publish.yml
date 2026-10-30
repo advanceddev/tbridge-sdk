@@ -12,6 +12,11 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    env:
+      NODE_AUTH_TOKEN: ''
+      NPM_TOKEN: ''
+
     steps:
       - uses: actions/checkout@v4
 
@@ -32,8 +37,9 @@ jobs:
       - name: Verify OIDC Authentication
         run: |
           echo "Checking npm auth status..."
+          npm config delete //registry.npmjs.org/:_authToken
+          npm config delete _authToken
           npm whoami
-          # Если всё настроено верно, здесь ДОЛЖНО быть напечатано: github-actions
 
       - name: Publish to npm
         run: npm publish --access public --provenance --no-git-checks
