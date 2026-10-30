@@ -1,6 +1,6 @@
 {
   "name": "@tbridge/sdk",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": false,
   "description": "Enterprise pure TypeScript TON wallet connector SDK for the browser",
   "keywords": [
