@@ -55,6 +55,7 @@ import {
   saveLastWallet,
   loadLastWallet,
   savePersistedSession,
+  setSessionPersistence,
 } from './session';
 
 export interface TBridgeConnectOptions {
@@ -113,6 +114,7 @@ export class TBridge {
     this.storage = options.storage ?? new LocalStorageAdapter();
     this.cryptoProvider = options.crypto;
     this.sessionMaxAgeMs = options.sessionMaxAgeMs ?? SESSION_MAX_AGE_MS;
+    setSessionPersistence(options.sessionPersistence === 'session' ? 'session' : 'local');
     this.locale = normalizeLocale(options.locale);
     this.theme = normalizeTheme(options.theme);
     this.discovery = new WalletDiscovery(
@@ -300,6 +302,7 @@ export class TBridge {
         createdAt: Date.now(),
         origin: currentOrigin(),
         secretKeyHex: keys.secretKeyHex,
+        lastRpcId: this.requestId,
       });
       await saveLastWallet(this.storage, wallet.app_name);
 
@@ -407,6 +410,9 @@ export class TBridge {
 
       this.session = session;
       this.account = persisted.account;
+      if (typeof persisted.lastRpcId === 'number' && persisted.lastRpcId >= 0) {
+        this.requestId = persisted.lastRpcId;
+      }
       this.device = persisted.device;
       this.currentWallet = wallet;
       this.setStatus({
@@ -474,6 +480,7 @@ export class TBridge {
 
     const boc =
       typeof response.result === 'string' ? response.result : String(response.result ?? '');
+    await this.bumpPersistedRpcId();
     return { boc };
   }
 
@@ -505,8 +512,10 @@ export class TBridge {
     }
 
     if (typeof response.result === 'string') {
+      await this.bumpPersistedRpcId();
       return { signature: response.result };
     }
+    await this.bumpPersistedRpcId();
     return response.result as { signature: string };
   }
 
@@ -531,8 +540,6 @@ export class TBridge {
     this.setStatus({ status: 'disconnected' });
   }
 
-  // -----------------------------------------------------------------------
-
   private createHttpHooks() {
     return {
       onHealth: (health: BridgeHealth) => {
@@ -556,10 +563,31 @@ export class TBridge {
     }
   }
 
+  /**
+   * RPC request id — MUST be a decimal integer string, strictly increasing
+   * per session. Wallets reject non-numeric / non-monotonic ids (often with
+   * no UI). Spec: rpc.md AppRequest.id
+   */
   private nextId(): string {
+    const id = String(this.requestId);
     this.requestId += 1;
-    return `${Date.now().toString(36)}-${this.requestId}`;
+    return id;
   }
+
+  private async bumpPersistedRpcId(): Promise<void> {
+    try {
+      const current = await loadPersistedSession(this.storage);
+      if (!current) return;
+      await savePersistedSession(this.storage, { ...current, lastRpcId: this.requestId });
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  /**
+   * Re-open the wallet app/session so it consumes the pending bridge message.
+   * Required when push notifications are missing or ignored (common for Telegram).
+   */
 
   private buildConnectRequest(tonProofPayload?: string): ConnectRequest {
     const items: ConnectRequest['items'] = [
@@ -592,6 +620,11 @@ export class TBridge {
     this.account = account;
     this.device = event.payload.device;
     this.currentWallet = wallet;
+
+    if (typeof event.id === 'number' && event.id >= this.requestId) {
+      this.requestId = event.id + 1;
+    }
+
     this.setStatus({
       status: 'connected',
       account,

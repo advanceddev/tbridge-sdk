@@ -30,7 +30,12 @@ export function hexToBytes(hex: string): Uint8Array {
 }
 
 export function isHex64(value: string): boolean {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  return typeof value === 'string' && /^[0-9a-fA-F]{64}$/.test(value);
+}
+
+/** Normalize public/session key hex to lowercase 64 chars */
+export function normalizeKeyHex(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 /** Standard base64 (not URL-safe) — used for bridge message bodies */
@@ -42,7 +47,7 @@ export function bytesToBase64(bytes: Uint8Array): string {
     }
     return btoa(binary);
   }
-  // Fallback for environments without btoa
+  // Fallback for environments without btoa (should not happen in browser)
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   let result = '';
   let i = 0;

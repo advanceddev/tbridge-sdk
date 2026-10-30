@@ -1,7 +1,6 @@
 /**
  * HTTP / SSE Bridge transport.
  *
- * Transport qualities:
  * - Shared session factory for connect + restore (no duplicated SSE logic)
  * - Exponential backoff + jitter on reconnect
  * - bridgeHealth callbacks
@@ -53,17 +52,59 @@ interface PendingRequest {
 }
 
 function normalizeBridgeUrl(url: string): string {
+  // Strip trailing '/' without regex (avoids ReDoS lints on long slash runs).
   let end = url.length;
-  while (end > 0 && url.charCodeAt(end - 1) === 47) {
+  while (end > 0 && url.charCodeAt(end - 1) === 47 /* '/' */) {
     end -= 1;
   }
   return end === url.length ? url : url.slice(0, end);
 }
 
-function eventsUrl(bridgeUrl: string, clientId: string, lastEventId?: string): string {
+/**
+ * Correlation id for bridge analytics / wallet routing.
+ * Spec: optional `trace_id=<uuid>` on GET /events and POST /message.
+ * Some bridges (e.g. Telegram) effectively expect it on RPC posts.
+ */
+/**
+ * UUID v7 (time-ordered) for `trace_id`.
+ * Spec allows any uuid; Telegram bridge analytics expect this shape in practice.
+ */
+function createTraceId(): string {
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 16; i++) bytes[i] = (Math.random() * 256) | 0;
+  }
+  // 48-bit unix timestamp in ms
+  const ts = Date.now();
+  bytes[0] = (ts / 2 ** 40) & 0xff;
+  bytes[1] = (ts / 2 ** 32) & 0xff;
+  bytes[2] = (ts / 2 ** 24) & 0xff;
+  bytes[3] = (ts / 2 ** 16) & 0xff;
+  bytes[4] = (ts / 2 ** 8) & 0xff;
+  bytes[5] = ts & 0xff;
+  // version 7
+  bytes[6] = (bytes[6]! & 0x0f) | 0x70;
+  // RFC 4122 variant
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  let hex = '';
+  for (let i = 0; i < 16; i++) {
+    hex += bytes[i]!.toString(16).padStart(2, '0');
+  }
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function eventsUrl(
+  bridgeUrl: string,
+  clientId: string,
+  lastEventId?: string,
+  traceId?: string,
+): string {
   const base = `${normalizeBridgeUrl(bridgeUrl)}/events`;
   const params = new URLSearchParams({ client_id: clientId });
   if (lastEventId) params.set('last_event_id', lastEventId);
+  if (traceId) params.set('trace_id', traceId);
   return `${base}?${params.toString()}`;
 }
 
@@ -73,14 +114,16 @@ function messageUrl(
   to: string,
   ttl: number,
   topic?: string,
+  traceId?: string,
 ): string {
   const base = `${normalizeBridgeUrl(bridgeUrl)}/message`;
   const params = new URLSearchParams({
-    client_id: from,
-    to,
+    client_id: from.toLowerCase(),
+    to: to.toLowerCase(),
     ttl: String(ttl),
   });
   if (topic) params.set('topic', topic);
+  params.set('trace_id', traceId ?? createTraceId());
   return `${base}?${params.toString()}`;
 }
 
@@ -90,6 +133,9 @@ function backoffMs(attempt: number): number {
   return exp + jitter;
 }
 
+/**
+ * Detect if running inside Telegram WebApp (Mini App)
+ */
 /**
  * Build wallet connect universal / deep link.
  * Wire format used by wallet apps: `r` is URL-encoded ConnectRequest JSON
@@ -181,7 +227,7 @@ function openHttpChannel(params: {
 
     if (isConnectEvent(msg)) {
       if (msg.event === 'connect') {
-        walletClientId = from;
+        walletClientId = from.toLowerCase();
       }
       for (const w of connectWaiters.splice(0)) {
         w(msg);
@@ -189,17 +235,19 @@ function openHttpChannel(params: {
       return;
     }
 
+    // Wallet-initiated disconnect event
     if (msg && typeof msg === 'object' && (msg as { event?: string }).event === 'disconnect') {
       params.hooks?.onWalletDisconnect?.();
       return;
     }
 
     if (isWalletResponse(msg)) {
-      const p = pending.get(msg.id);
+      const rid = String((msg as { id: string | number }).id);
+      const p = pending.get(rid);
       if (p) {
         clearTimeout(p.timer);
-        pending.delete(msg.id);
-        p.resolve(msg);
+        pending.delete(rid);
+        p.resolve({ ...msg, id: rid } as WalletResponse);
       }
     }
   }
@@ -211,7 +259,7 @@ function openHttpChannel(params: {
         return;
       }
       cleanupEs();
-      const url = eventsUrl(bridgeUrl, clientId, lastEventId);
+      const url = eventsUrl(bridgeUrl, clientId, lastEventId, createTraceId());
       try {
         eventSource = new EventSource(url);
       } catch (e) {
@@ -246,7 +294,7 @@ function openHttpChannel(params: {
         try {
           plaintext = crypto.decrypt(envelope.message, envelope.from);
         } catch {
-          return;
+          return; // auth failure — discard
         }
         handlePlaintext(plaintext, envelope.from);
       };
@@ -261,6 +309,7 @@ function openHttpChannel(params: {
         setHealth('reconnecting');
         cleanupEs();
         if (reconnectAttempt >= SSE_MAX_RECONNECT_ATTEMPTS) {
+          // Hard-stop: no further reconnects, fail pending RPCs
           setHealth('offline');
           for (const [, p] of pending) {
             clearTimeout(p.timer);
@@ -299,6 +348,7 @@ function openHttpChannel(params: {
       connectWaiters.push(onEvent);
     });
 
+  // Start SSE immediately (caller awaits openSse via connect/restore)
   const sseReady = openSse();
 
   const session: HttpBridgeSession = {
@@ -333,10 +383,11 @@ function openHttpChannel(params: {
       });
 
       try {
+        // Body: base64(nonce||ciphertext). No Content-Type — matches bridge clients
+        // that POST a bare string body (wallets / Telegram bridge).
         const res = await fetch(url, {
           method: 'POST',
           body,
-          headers: { 'Content-Type': 'text/plain' },
           signal: abort.signal,
           credentials: 'omit',
           cache: 'no-store',
@@ -368,7 +419,9 @@ function openHttpChannel(params: {
           params: [],
           id: String(Date.now()),
         });
-      } catch {}
+      } catch {
+        /* best-effort */
+      }
       session.destroy();
     },
     destroy(): void {
@@ -404,6 +457,7 @@ export async function connectHttpBridge(params: {
   sessionCrypto: SessionCrypto;
   onConnectLink: (link: string) => void;
   hooks?: HttpSessionHooks;
+  /** Called once the SSE channel is live (for cancel / teardown) */
   onChannel?: (session: HttpBridgeSession) => void;
 }): Promise<{ event: ConnectEvent; session: HttpBridgeSession }> {
   const channel = openHttpChannel({

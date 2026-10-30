@@ -45,7 +45,7 @@ export function isConnectEvent(value: unknown): value is ConnectEvent {
 export function isWalletResponse(value: unknown): value is WalletResponse {
   if (!value || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
-  if (typeof v.id !== 'string') return false;
+  if (typeof v.id !== 'string' && typeof v.id !== 'number') return false;
   if ('result' in v) return true;
   if ('error' in v && v.error && typeof v.error === 'object') return true;
   return false;

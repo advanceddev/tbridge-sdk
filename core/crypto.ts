@@ -15,7 +15,14 @@
  */
 
 import { TBridgeError } from './errors';
-import { bytesToHex, hexToBytes, isHex64, bytesToBase64, base64ToBytes } from './encoding';
+import {
+  bytesToHex,
+  hexToBytes,
+  isHex64,
+  bytesToBase64,
+  base64ToBytes,
+  normalizeKeyHex,
+} from './encoding';
 
 export interface KeyPair {
   /** 32-byte X25519 public key */
@@ -163,6 +170,7 @@ export class SessionCrypto {
     this.provider = provider;
   }
 
+  /** Bridge client_id */
   get clientId(): string {
     return this.publicKeyHex;
   }
@@ -177,7 +185,7 @@ export class SessionCrypto {
       if (!isHex64(existing.publicKeyHex)) {
         throw new TBridgeError('CRYPTO_ERROR', 'Invalid publicKeyHex');
       }
-
+      // secret may be 32 or 64 bytes (64 or 128 hex chars)
       if (
         typeof existing.secretKeyHex !== 'string' ||
         !/^[0-9a-fA-F]+$/.test(existing.secretKeyHex) ||
@@ -189,7 +197,7 @@ export class SessionCrypto {
       if (sk.length !== 32 && sk.length !== 64) {
         throw new TBridgeError('CRYPTO_ERROR', 'Invalid secretKeyHex length');
       }
-
+      // Warm up nacl so seal/open work
       if (p instanceof NaclCryptoProvider) {
         await loadNacl();
       }
@@ -203,18 +211,23 @@ export class SessionCrypto {
   /** Encrypt UTF-8 string → base64(nonce||ct) for bridge POST body */
   encrypt(plaintext: string, receiverPublicKeyHex: string): string {
     this.assertAlive();
-    if (!isHex64(receiverPublicKeyHex)) {
+    const receiver = normalizeKeyHex(receiverPublicKeyHex);
+    if (!isHex64(receiver)) {
       throw new TBridgeError('CRYPTO_ERROR', 'Invalid receiver public key');
     }
     const msg = new TextEncoder().encode(plaintext);
-    const sealed = this.provider.seal(msg, hexToBytes(receiverPublicKeyHex), this.secretKey);
+    const sealed = this.provider.seal(msg, hexToBytes(receiver), this.secretKey);
+    if (!sealed || sealed.length <= 24) {
+      throw new TBridgeError('CRYPTO_ERROR', 'Encryption produced empty ciphertext');
+    }
     return bytesToBase64(sealed);
   }
 
   /** Decrypt base64(nonce||ct) → UTF-8 string; throws on auth failure */
   decrypt(encryptedBase64: string, senderPublicKeyHex: string): string {
     this.assertAlive();
-    if (!isHex64(senderPublicKeyHex)) {
+    const sender = normalizeKeyHex(senderPublicKeyHex);
+    if (!isHex64(sender)) {
       throw new TBridgeError('CRYPTO_ERROR', 'Invalid sender public key');
     }
     let sealed: Uint8Array;
@@ -223,7 +236,7 @@ export class SessionCrypto {
     } catch (e) {
       throw new TBridgeError('CRYPTO_ERROR', 'Invalid base64 ciphertext', e);
     }
-    const opened = this.provider.open(sealed, hexToBytes(senderPublicKeyHex), this.secretKey);
+    const opened = this.provider.open(sealed, hexToBytes(sender), this.secretKey);
     if (!opened) {
       throw new TBridgeError('CRYPTO_ERROR', 'Decryption failed — message discarded');
     }

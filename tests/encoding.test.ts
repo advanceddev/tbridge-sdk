@@ -32,7 +32,7 @@ describe('encoding', () => {
 
   it('isHex64', () => {
     expect(isHex64('a'.repeat(64))).toBe(true);
-    expect(isHex64('A'.repeat(64))).toBe(false);
+    expect(isHex64('A'.repeat(64))).toBe(true);
     expect(isHex64('a'.repeat(63))).toBe(false);
   });
 

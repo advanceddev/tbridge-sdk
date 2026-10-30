@@ -87,7 +87,7 @@ export interface DeviceInfo {
 }
 
 export interface Account {
-  address: string; // raw
+  address: string; // raw or user-friendly — we normalize later
   chain: string; // NETWORK_ID
   walletStateInit?: string;
   publicKey?: string;
@@ -200,6 +200,7 @@ export type SignDataPayload =
   | { type: 'cell'; schema: string; cell: string }; // base64 BoC
 
 export interface SignDataRequest {
+  /** Schema version used by wallets — payload is JSON-stringified in params */
   from?: string;
   network?: string;
   payload: SignDataPayload;
@@ -272,6 +273,8 @@ export interface PersistedSession {
    * never persisted to localStorage by session helpers.
    */
   secretKeyHex?: string;
+  /** Monotonic RPC id counter (stringified integer) */
+  lastRpcId?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +319,12 @@ export interface TBridgeOptions {
   allowInsecureManifest?: boolean;
   /** Max persisted session age ms (default 7d) */
   sessionMaxAgeMs?: number;
+  /**
+   * Where to store the HTTP session secret.
+   * - `local` (default): survives Mini App / tab close (localStorage)
+   * - `session`: tab-scoped only (sessionStorage) — stricter, worse UX
+   */
+  sessionPersistence?: 'local' | 'session';
   /** UI language: en | ru (default en) */
   locale?: 'en' | 'ru';
   /** UI palette: dark | light (default dark) */
