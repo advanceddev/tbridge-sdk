@@ -20,6 +20,11 @@ export interface ActionSheetOptions {
   theme?: TBridgeTheme;
   wallet: WalletInfo | null;
   clientId: string;
+  /**
+   * dApp manifest URL. When set, wake links include `r` (Tonkeeper rejects id-only).
+   * Optional for backward compatibility with older call sites.
+   */
+  manifestUrl?: string;
   onCancel: () => void;
 }
 
@@ -39,11 +44,60 @@ function confirmLabel(locale: TBridgeLocale, wallet: WalletInfo | null): string 
   return t(locale, 'action.confirmNamed').replace('{name}', wallet.name || wallet.app_name);
 }
 
-function buildOpenLink(wallet: WalletInfo, clientId: string): string {
+/**
+ * Wake / focus link for an existing bridge session.
+ * Tonkeeper (and some others) reject `…/ton-connect?v=2&id=…` without `r`
+ * → "Unsupported link" / "missing payload". Always attach a minimal connect
+ * request JSON so the wallet can open and pick up pending bridge RPC.
+ */
+function buildOpenLink(wallet: WalletInfo, clientId: string, manifestUrl?: string): string {
+  // Prefer https universal URL; custom schemes without a full `r` often fail.
   const base = wallet.universal_url || wallet.deepLink || '';
   if (!base) return '';
+
+  const id = clientId.toLowerCase();
+
+  // Without manifest — legacy id-only link (some wallets accept https+id)
+  if (!manifestUrl) {
+    if (base.startsWith('https://') || base.startsWith('http://')) {
+      try {
+        const u = new URL(base);
+        u.searchParams.set('v', '2');
+        u.searchParams.set('id', id);
+        if (!u.searchParams.has('ret')) u.searchParams.set('ret', 'back');
+        return u.toString();
+      } catch {
+        /* fall through */
+      }
+    }
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}v=2&id=${id}&ret=back`;
+  }
+
+  const request = {
+    manifestUrl,
+    items: [{ name: 'ton_addr' as const }],
+  };
+  const r = encodeURIComponent(JSON.stringify(request));
+
+  if (base.startsWith('https://') || base.startsWith('http://')) {
+    try {
+      const u = new URL(base);
+      u.searchParams.set('v', '2');
+      u.searchParams.set('id', id);
+      // searchParams encodes once; pass raw JSON
+      u.searchParams.set('r', JSON.stringify(request));
+      if (!u.searchParams.has('ret')) {
+        u.searchParams.set('ret', 'back');
+      }
+      return u.toString();
+    } catch {
+      /* fall through */
+    }
+  }
+
   const sep = base.includes('?') ? '&' : '?';
-  return `${base}${sep}v=2&id=${clientId.toLowerCase()}`;
+  return `${base}${sep}v=2&id=${id}&r=${r}&ret=back`;
 }
 
 export function showActionSheet(options: ActionSheetOptions): ActionSheetHandle {
@@ -122,12 +176,12 @@ export function showActionSheet(options: ActionSheetOptions): ActionSheetHandle 
   openBtn.addEventListener('click', () => {
     const wallet = options.wallet;
     if (!wallet) return;
-    const link = buildOpenLink(wallet, options.clientId);
+    const link = buildOpenLink(wallet, options.clientId, options.manifestUrl);
     if (!link) return;
-    openWalletLink(link, { deepLink: wallet.deepLink });
+    // Do not pass raw deepLink — id-only custom schemes are rejected by Tonkeeper
+    openWalletLink(link, { forceUniversal: true });
   });
 
-  // Focus primary control
   if (isDesktop()) {
     closeOuter.focus();
   } else {

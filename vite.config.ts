@@ -1,7 +1,6 @@
 import { defineConfig } from 'vite';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import dts from 'unplugin-dts/vite';
 
 const root = dirname(fileURLToPath(import.meta.url));
 
@@ -24,19 +23,5 @@ export default defineConfig({
       },
     },
   },
-  plugins: [
-    dts({
-      tsconfigPath: resolve(root, 'tsconfig.build.json'),
-      insertTypesEntry: true,
-      include: [
-        'index.ts',
-        'core/**/*.ts',
-        'bridge/**/*.ts',
-        'wallet/**/*.ts',
-        'ui/**/*.ts',
-        'utils/**/*.ts',
-      ],
-      exclude: ['**/*.test.ts', 'tests/**', 'vite.config.ts', 'vitest.config.ts'],
-    }),
-  ],
+  plugins: [],
 });
