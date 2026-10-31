@@ -133,7 +133,30 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
   );
   const aboutTitle = el('h3', 'tbridge-about-title', t(locale, 'about.title'));
   const aboutBody = el('p', 'tbridge-about-body', t(locale, 'about.body'));
-  aboutCard.append(aboutClose, aboutLogoWrap, aboutTitle, aboutBody);
+
+  const aboutGithub = document.createElement('a');
+  aboutGithub.className = 'tbridge-github';
+  aboutGithub.href = 'https://github.com/advanceddev/tbridge-sdk';
+  aboutGithub.target = '_blank';
+  aboutGithub.rel = 'noopener noreferrer';
+  aboutGithub.setAttribute('aria-label', 'TBridge on GitHub');
+  aboutGithub.title = 'GitHub';
+  const aboutGithubSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  aboutGithubSvg.setAttribute('viewBox', '0 0 24 24');
+  aboutGithubSvg.setAttribute('width', '22');
+  aboutGithubSvg.setAttribute('height', '22');
+  aboutGithubSvg.setAttribute('aria-hidden', 'true');
+  aboutGithubSvg.setAttribute('focusable', 'false');
+  aboutGithubSvg.setAttribute('fill', 'currentColor');
+  const aboutGithubPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  aboutGithubPath.setAttribute(
+    'd',
+    'M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188.5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943',
+  );
+  aboutGithubSvg.appendChild(aboutGithubPath);
+  aboutGithub.appendChild(aboutGithubSvg);
+
+  aboutCard.append(aboutClose, aboutLogoWrap, aboutTitle, aboutBody, aboutGithub);
   aboutScrim.append(aboutCard);
   overlay.append(aboutScrim);
 
@@ -164,6 +187,7 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
     buttonsContainer.append(closeBtn, aboutBtn);
     wrapper.append(buttonsContainer);
   } else {
+    // Mobile: about left of close in header
     const headerEnd = el('div', 'tbridge-header-end');
     headerEnd.append(aboutBtn, closeBtn);
     header.append(headerEnd);
@@ -318,6 +342,7 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
       closeBtn.focus();
     });
 
+    // Размещаем кнопку "Назад" в зависимости от размера экрана
     if (isDesktop()) {
       buttonsContainer.append(btn);
     } else {
@@ -388,97 +413,115 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
         return;
       }
 
+      const enteringWaiting = mode !== 'waiting';
       mode = 'waiting';
-
       ensureBackButton();
-
       body.className = 'tbridge-body tbridge-waiting';
-      body.replaceChildren();
 
-      const wallet = opts?.wallet;
+      // Stable shell: build once, then patch media/message/actions in place so
+      // spinner → QR does not reflow the modal.
+      let media = body.querySelector('.tbridge-media-slot') as HTMLElement | null;
+      let msgEl = body.querySelector('.tbridge-waiting-msg') as HTMLElement | null;
+      let actions = body.querySelector('.tbridge-waiting-actions') as HTMLElement | null;
+      let chip = body.querySelector('.tbridge-wallet-chip') as HTMLElement | null;
 
-      if (wallet) {
-        const chip = el('div', 'tbridge-wallet-chip');
+      if (enteringWaiting || !media || !msgEl || !actions) {
+        body.replaceChildren();
 
-        if (wallet.image && isSafeImageUrl(wallet.image)) {
-          const img = el('img', 'tbridge-wallet-chip-icon') as HTMLImageElement;
-          img.src = wallet.image;
-          img.alt = '';
-          img.loading = 'eager';
-          img.decoding = 'async';
-          img.referrerPolicy = 'no-referrer';
-          chip.append(img);
-        } else {
-          const placeholder = el('div', 'tbridge-wallet-chip-icon tbridge-wallet-chip-icon--ph');
-          placeholder.textContent = (wallet.name?.[0] ?? '?').toUpperCase();
-          chip.append(placeholder);
-        }
-
-        const meta = el('div', 'tbridge-wallet-chip-meta');
-        meta.append(el('div', 'tbridge-wallet-chip-name', wallet.name));
-
-        const platforms = (wallet.platforms ?? []).slice(0, 5).map(capitalizePlatform).join(' · ');
-
-        if (platforms) {
-          meta.append(el('div', 'tbridge-wallet-chip-platforms', platforms));
-        }
-
-        chip.append(meta);
-        body.append(chip);
-      }
-
-      if (opts?.qrDataUrl) {
-        const qr = el('img', 'tbridge-qr') as HTMLImageElement;
-        qr.src = opts.qrDataUrl;
-        qr.alt = 'QR';
-        body.append(qr);
-      } else if (!opts?.error) {
-        const spinnerWrap = el('div', 'tbridge-spinner-wrap');
-        spinnerWrap.append(el('div', 'tbridge-spinner'));
-        body.append(spinnerWrap);
-      }
-
-      body.append(el('p', opts?.error ? 'tbridge-waiting-error' : undefined, message));
-
-      const link = opts?.link;
-
-      if (link) {
-        const openBtn = el('button', 'tbridge-open-link', t(locale, 'waiting.openLink'));
-        openBtn.type = 'button';
-        openBtn.addEventListener('click', () => {
-          openWalletLink(link, {
-            deepLink: opts?.wallet?.deepLink,
-          });
-        });
-        body.append(openBtn);
-
-        const copyBtn = el('button', 'tbridge-copy-link', t(locale, 'waiting.copy'));
-        copyBtn.type = 'button';
-
-        copyBtn.addEventListener('click', () => {
-          const clipboard = navigator.clipboard;
-
-          if (!clipboard) {
-            return;
+        const wallet = opts?.wallet;
+        if (wallet) {
+          chip = el('div', 'tbridge-wallet-chip');
+          if (wallet.image && isSafeImageUrl(wallet.image)) {
+            const img = el('img', 'tbridge-wallet-chip-icon') as HTMLImageElement;
+            img.src = wallet.image;
+            img.alt = '';
+            img.loading = 'eager';
+            img.decoding = 'async';
+            img.referrerPolicy = 'no-referrer';
+            chip.append(img);
+          } else {
+            const placeholder = el('div', 'tbridge-wallet-chip-icon tbridge-wallet-chip-icon--ph');
+            placeholder.textContent = (wallet.name?.[0] ?? '?').toUpperCase();
+            chip.append(placeholder);
           }
+          const meta = el('div', 'tbridge-wallet-chip-meta');
+          meta.append(el('div', 'tbridge-wallet-chip-name', wallet.name));
+          const platforms = (wallet.platforms ?? [])
+            .slice(0, 5)
+            .map(capitalizePlatform)
+            .join(' · ');
+          if (platforms) {
+            meta.append(el('div', 'tbridge-wallet-chip-platforms', platforms));
+          }
+          chip.append(meta);
+          body.append(chip);
+        }
 
-          void clipboard
-            .writeText(link)
-            .then(() => {
-              copyBtn.textContent = t(locale, 'waiting.copied');
+        // Fixed 200×200 slot — spinner and QR share the same box
+        media = el('div', 'tbridge-media-slot');
+        media.setAttribute('aria-hidden', 'false');
+        body.append(media);
 
-              window.setTimeout(() => {
-                if (!closed) {
-                  copyBtn.textContent = t(locale, 'waiting.copy');
-                }
-              }, 1500);
-            })
-            .catch(() => {
-              // Clipboard may be unavailable in some browsers/contexts
-            });
-        });
+        msgEl = el('p', 'tbridge-waiting-msg');
+        body.append(msgEl);
 
-        body.append(copyBtn);
+        actions = el('div', 'tbridge-waiting-actions');
+        body.append(actions);
+      }
+
+      // Media: QR replaces spinner inside the reserved slot (no layout shift)
+      if (media) {
+        media.replaceChildren();
+        if (opts?.qrDataUrl) {
+          const qr = el('img', 'tbridge-qr') as HTMLImageElement;
+          qr.src = opts.qrDataUrl;
+          qr.alt = 'QR';
+          media.append(qr);
+        } else if (!opts?.error) {
+          const spinnerWrap = el('div', 'tbridge-spinner-wrap');
+          spinnerWrap.append(el('div', 'tbridge-spinner'));
+          media.append(spinnerWrap);
+        }
+        // error: keep empty slot so height stays stable
+      }
+
+      if (msgEl) {
+        msgEl.className = opts?.error
+          ? 'tbridge-waiting-msg tbridge-waiting-error'
+          : 'tbridge-waiting-msg';
+        msgEl.textContent = message;
+      }
+
+      if (actions) {
+        actions.replaceChildren();
+        const link = opts?.link;
+        if (link) {
+          const openBtn = el('button', 'tbridge-open-link', t(locale, 'waiting.openLink'));
+          openBtn.type = 'button';
+          openBtn.addEventListener('click', () => {
+            openWalletLink(link, { deepLink: opts?.wallet?.deepLink });
+          });
+          actions.append(openBtn);
+
+          const copyBtn = el('button', 'tbridge-copy-link', t(locale, 'waiting.copy'));
+          copyBtn.type = 'button';
+          copyBtn.addEventListener('click', () => {
+            const clipboard = navigator.clipboard;
+            if (!clipboard) return;
+            void clipboard
+              .writeText(link)
+              .then(() => {
+                copyBtn.textContent = t(locale, 'waiting.copied');
+                window.setTimeout(() => {
+                  if (!closed) copyBtn.textContent = t(locale, 'waiting.copy');
+                }, 1500);
+              })
+              .catch(() => {
+                /* clipboard unavailable */
+              });
+          });
+          actions.append(copyBtn);
+        }
       }
     },
   };
