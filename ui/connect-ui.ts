@@ -30,6 +30,11 @@ export interface ConnectWithUiOptions {
   preferQr?: boolean;
   locale?: TBridgeLocale;
   theme?: TBridgeTheme;
+  /**
+   * Server-issued ton_proof payload (random string).
+   * Passed into every bridge.connect() from the UI picker / injected path.
+   */
+  tonProofPayload?: string;
 }
 
 export async function connectWithUi(
@@ -46,7 +51,10 @@ export async function connectWithUi(
 
   const injected = await bridge.detectInjected();
   if (injected) {
-    return bridge.connect({ appName: injected.appName });
+    return bridge.connect({
+      appName: injected.appName,
+      tonProofPayload: options.tonProofPayload,
+    });
   }
 
   let wallets = await bridge.getWallets();
@@ -113,6 +121,7 @@ export async function connectWithUi(
         bridge
           .connect({
             appName: wallet.app_name,
+            tonProofPayload: options.tonProofPayload,
             onConnectLink: (link) => {
               if (currentAttemptId !== connectAttemptId || settled || backRequested) {
                 handoff?.cancel();

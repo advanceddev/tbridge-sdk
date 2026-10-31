@@ -78,6 +78,8 @@ await bridge.restoreConnection();
 
 if (!bridge.isConnected) {
   await connectWithUi(bridge);
+  // tonProofPayload is optional param
+  // await connectWithUi(bridge, { tonProofPayload });
 }
 
 bridge.on('statusChange', (status) => {

@@ -1,6 +1,6 @@
 /**
  * TBridge — main SDK entry (framework-agnostic).
- * HTTP restore, signData, rate limiting, origin-bound sessions,
+ * Phase 2: HTTP restore, signData, rate limiting, origin-bound sessions,
  * bridge health events, parallel discovery.
  */
 
@@ -83,6 +83,8 @@ export class TBridge {
 
   private status: ConnectionStatus = { status: 'disconnected' };
   private account: Account | null = null;
+  /** Last successful connect item replies (ton_addr, ton_proof, …) */
+  private lastConnectItems: import('../core/types').ConnectItemReply[] | null = null;
   private device: DeviceInfo | null = null;
   private currentWallet: WalletInfo | null = null;
   private session: ActiveSession | null = null;
@@ -138,6 +140,14 @@ export class TBridge {
 
   get connectedAccount(): Account | null {
     return this.account;
+  }
+
+  /**
+   * Item replies from the last successful connect (includes ton_proof when requested).
+   * Cleared on disconnect / teardown.
+   */
+  getLastConnectItems(): import('../core/types').ConnectItemReply[] | null {
+    return this.lastConnectItems;
   }
 
   get connectedWallet(): WalletInfo | null {
@@ -486,6 +496,7 @@ export class TBridge {
         theme: this.theme,
         wallet: this.currentWallet,
         clientId,
+        manifestUrl: this.manifestUrl,
         onCancel: () => {
           rejectCancel?.(new TBridgeError('USER_REJECTED', 'User rejected the request'));
         },
@@ -574,6 +585,8 @@ export class TBridge {
     this.setStatus({ status: 'disconnected' });
   }
 
+  // -----------------------------------------------------------------------
+
   private createHttpHooks() {
     return {
       onHealth: (health: BridgeHealth) => {
@@ -603,6 +616,7 @@ export class TBridge {
    * no UI). Spec: rpc.md AppRequest.id
    */
   private nextId(): string {
+    // TonConnect starts at 0 and increments after issue
     const id = String(this.requestId);
     this.requestId += 1;
     return id;
@@ -652,13 +666,14 @@ export class TBridge {
 
     this.session = session;
     this.account = account;
+    this.lastConnectItems = event.payload.items;
     this.device = event.payload.device;
     this.currentWallet = wallet;
-
+    // Ensure RPC ids stay strictly above the connect event id (some wallets
+    // share one monotonic counter for events + requests).
     if (typeof event.id === 'number' && event.id >= this.requestId) {
       this.requestId = event.id + 1;
     }
-
     this.setStatus({
       status: 'connected',
       account,
@@ -681,6 +696,7 @@ export class TBridge {
       this.sessionCrypto = null;
     }
     this.account = null;
+    this.lastConnectItems = null;
     this.device = null;
     this.currentWallet = null;
   }

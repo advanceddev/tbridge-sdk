@@ -26,8 +26,8 @@ async function getStorageCryptoKey(): Promise<CryptoKey> {
   if (!cachedStorageKey) {
     cachedStorageKey = (async () => {
       const secret =
-        typeof (globalThis as { __TBRIDGE_STORAGE_SECRET__?: string }).__TBRIDGE_STORAGE_SECRET__ ===
-        'string'
+        typeof (globalThis as { __TBRIDGE_STORAGE_SECRET__?: string })
+          .__TBRIDGE_STORAGE_SECRET__ === 'string'
           ? (globalThis as { __TBRIDGE_STORAGE_SECRET__?: string }).__TBRIDGE_STORAGE_SECRET__!
           : `${window.location.origin}:tbridge:storage:fallback`;
       const material = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
