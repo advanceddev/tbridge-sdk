@@ -53,6 +53,8 @@ import { showActionSheet, type ActionSheetHandle } from '../ui/action-sheet';
 import {
   clearPersistedSession,
   loadPersistedSession,
+  loadLastRpcId,
+  saveLastRpcId,
   saveLastWallet,
   loadLastWallet,
   savePersistedSession,
@@ -316,7 +318,9 @@ export class TBridge {
         origin: currentOrigin(),
         secretKeyHex: keys.secretKeyHex,
         lastRpcId: this.requestId,
+        connectItems: this.lastConnectItems ?? undefined,
       });
+      await saveLastRpcId(this.storage, this.requestId);
       await saveLastWallet(this.storage, wallet.app_name);
 
       return this.status;
@@ -424,11 +428,19 @@ export class TBridge {
 
       this.session = session;
       this.account = persisted.account;
-      if (typeof persisted.lastRpcId === 'number' && persisted.lastRpcId >= 0) {
+      // Prefer dedicated cheap key; fall back to legacy field on the session blob.
+      const rpcFromKey = await loadLastRpcId(this.storage);
+      if (rpcFromKey !== null) {
+        this.requestId = rpcFromKey;
+      } else if (typeof persisted.lastRpcId === 'number' && persisted.lastRpcId >= 0) {
         this.requestId = persisted.lastRpcId;
       }
       this.device = persisted.device;
       this.currentWallet = wallet;
+      // Restore connect item replies (ton_proof etc.) for lazy verification after reload.
+      if (Array.isArray(persisted.connectItems) && persisted.connectItems.length > 0) {
+        this.lastConnectItems = persisted.connectItems;
+      }
       this.setStatus({
         status: 'connected',
         account: persisted.account,
@@ -551,6 +563,8 @@ export class TBridge {
 
   /**
    * Sign opaque data (text / binary / cell) without broadcasting.
+   * Shows the same action sheet as sendTransaction on HTTP sessions so the
+   * wallet process is woken on mobile (push is often missing).
    */
   async signData(
     payload: SignDataPayload,
@@ -566,22 +580,55 @@ export class TBridge {
       ...payload,
     };
 
-    const response = await this.session!.send({
-      method: 'signData',
-      params: [JSON.stringify(body)],
-      id: this.nextId(),
+    const clientId =
+      this.sessionCrypto?.clientId ??
+      (this.session?.kind === 'http' ? this.session.clientId : '') ??
+      '';
+
+    let sheet: ActionSheetHandle | null = null;
+    let rejectCancel: ((err: TBridgeError) => void) | null = null;
+    const cancelPromise = new Promise<never>((_, reject) => {
+      rejectCancel = reject;
     });
 
-    if ('error' in response) {
-      throw mapWalletError(response.error.code, response.error.message);
+    if (this.session?.kind === 'http' && clientId) {
+      sheet = showActionSheet({
+        locale: this.locale,
+        theme: this.theme,
+        wallet: this.currentWallet,
+        clientId,
+        manifestUrl: this.manifestUrl,
+        onCancel: () => {
+          rejectCancel?.(new TBridgeError('USER_REJECTED', 'User rejected the request'));
+        },
+      });
     }
 
-    if (typeof response.result === 'string') {
+    try {
+      const response = await Promise.race([
+        this.session!.send({
+          method: 'signData',
+          params: [JSON.stringify(body)],
+          id: this.nextId(),
+        }),
+        cancelPromise,
+      ]);
+
+      sheet?.close();
+
+      if ('error' in response) {
+        throw mapWalletError(response.error.code, response.error.message);
+      }
+
       await this.bumpPersistedRpcId();
-      return { signature: response.result };
+      if (typeof response.result === 'string') {
+        return { signature: response.result };
+      }
+      return response.result as { signature: string };
+    } catch (e) {
+      sheet?.close();
+      throw e;
     }
-    await this.bumpPersistedRpcId();
-    return response.result as { signature: string };
   }
 
   destroy(): void {
@@ -655,13 +702,8 @@ export class TBridge {
   }
 
   private async bumpPersistedRpcId(): Promise<void> {
-    try {
-      const current = await loadPersistedSession(this.storage);
-      if (!current) return;
-      await savePersistedSession(this.storage, { ...current, lastRpcId: this.requestId });
-    } catch {
-      /* non-fatal */
-    }
+    // Dedicated key — no full session re-encrypt on every RPC.
+    await saveLastRpcId(this.storage, this.requestId);
   }
 
   /**

@@ -15,6 +15,7 @@
  * often blocked. Programmatic <a> navigation is the reliable path.
  */
 
+import { TBridgeError } from '../core/errors';
 import {
   detectRuntimeEnv,
   isIframeContext,
@@ -285,9 +286,14 @@ function openExternalLinkInMiniApp(href: string, target: LinkTarget): boolean {
 export function openWalletLink(universalLink: string, options: OpenWalletLinkOptions = {}): void {
   if (!universalLink || typeof universalLink !== 'string') return;
 
-  let href = universalLink;
+  const href = universalLink;
+  // Truncating would corrupt the `r` / payload parameter and produce a broken
+  // deep link. Fail loud so the host can surface INVALID_PAYLOAD to the user.
   if (href.length > MAX_URL_LEN) {
-    href = href.slice(0, MAX_URL_LEN);
+    throw new TBridgeError(
+      'INVALID_PAYLOAD',
+      `Wallet link exceeds ${MAX_URL_LEN} characters (${href.length}) — refuse to open truncated URL`,
+    );
   }
 
   const env = detectRuntimeEnv();

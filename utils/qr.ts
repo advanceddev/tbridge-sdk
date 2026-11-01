@@ -60,19 +60,18 @@ export async function renderQrToDataUrl(
     ctx.fillStyle = light;
     ctx.fillRect(0, 0, px, px);
 
+    // Batch dark modules into one path + single fill — cheaper than
+    // fillRect-per-module on high-ECC / long-link matrices (~41×41+).
     ctx.fillStyle = dark;
+    ctx.beginPath();
     for (let y = 0; y < n; y++) {
       for (let x = 0; x < n; x++) {
         if (matrix[y]![x]) {
-          ctx.fillRect(
-            (x + margin) * moduleSize,
-            (y + margin) * moduleSize,
-            moduleSize,
-            moduleSize,
-          );
+          ctx.rect((x + margin) * moduleSize, (y + margin) * moduleSize, moduleSize, moduleSize);
         }
       }
     }
+    ctx.fill();
 
     if (opts?.logoUrl) {
       const logoSize = opts.logoSize ?? Math.floor(px * 0.22);

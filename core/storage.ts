@@ -14,24 +14,19 @@
  */
 
 import { assertBrowser, TBridgeError } from './errors';
+import { bytesToBase64, base64ToBytes } from './encoding';
 
 const ENC_PREFIX = 'enc:v1:';
 const IV_LENGTH = 12;
 let cachedStorageKey: Promise<CryptoKey> | null = null;
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
-}
-
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
+/**
+ * Derive the AES-GCM key used for at-rest storage encryption.
+ *
+ * `window.__TBRIDGE_STORAGE_SECRET__` is read once on first access and cached
+ * for the lifetime of the page. Setting the global after the first
+ * getItem/setItem has no effect — inject the secret before creating TBridge.
+ */
 async function getStorageCryptoKey(): Promise<CryptoKey> {
   if (!cachedStorageKey) {
     cachedStorageKey = (async () => {

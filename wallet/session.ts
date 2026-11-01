@@ -16,6 +16,7 @@
  */
 
 import { PROTOCOL_VERSION, STORAGE_KEYS } from '../core/constants';
+import { bytesToBase64, base64ToBytes } from '../core/encoding';
 import { safeJsonParse } from '../core/security';
 import type { StorageAdapter } from '../core/storage';
 import type { PersistedSession } from '../core/types';
@@ -47,27 +48,6 @@ function readSessionStorage(key: string): string | null {
   } catch {
     return null;
   }
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
-}
-
-function base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
-  const clean = base64.replace(/-/g, '+').replace(/_/g, '/');
-  const padding = clean.length % 4 === 0 ? 0 : 4 - (clean.length % 4);
-  const binary = atob(clean + '='.repeat(padding));
-
-  const buffer = new ArrayBuffer(binary.length);
-  const bytes = new Uint8Array(buffer);
-
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-
-  return bytes;
 }
 
 function getSessionEncryptionPassphrase(): string | null {
@@ -279,6 +259,30 @@ export async function clearPersistedSession(storage: StorageAdapter): Promise<vo
   await storage.removeItem(STORAGE_KEYS.SESSION);
   removeSessionStorage(STORAGE_KEYS.SESSION_SECRET);
   await storage.removeItem(STORAGE_KEYS.LAST_WALLET);
+  await storage.removeItem(STORAGE_KEYS.LAST_RPC_ID).catch(() => undefined);
+}
+
+/**
+ * Cheap write of the monotonic RPC counter — avoids re-encrypting the full
+ * session blob on every sendTransaction / signData.
+ */
+export async function saveLastRpcId(storage: StorageAdapter, id: number): Promise<void> {
+  try {
+    await storage.setItem(STORAGE_KEYS.LAST_RPC_ID, String(Math.max(0, Math.floor(id))));
+  } catch {
+    /* non-fatal */
+  }
+}
+
+export async function loadLastRpcId(storage: StorageAdapter): Promise<number | null> {
+  try {
+    const raw = await storage.getItem(STORAGE_KEYS.LAST_RPC_ID);
+    if (raw === null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function saveLastWallet(storage: StorageAdapter, appName: string): Promise<void> {

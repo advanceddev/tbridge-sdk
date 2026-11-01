@@ -273,8 +273,17 @@ export interface PersistedSession {
    * never persisted to localStorage by session helpers.
    */
   secretKeyHex?: string;
-  /** Monotonic RPC id counter (stringified integer) */
+  /**
+   * Monotonic RPC id counter. Prefer STORAGE_KEYS.LAST_RPC_ID for writes;
+   * this field remains for backward-compatible restores of older blobs.
+   */
   lastRpcId?: number;
+  /**
+   * Connect item replies from the successful connect event (ton_addr, ton_proof, …).
+   * Restored into getLastConnectItems() so consumers can validate ton_proof
+   * lazily after a page reload without re-connecting.
+   */
+  connectItems?: ConnectItemReply[];
 }
 
 // ---------------------------------------------------------------------------

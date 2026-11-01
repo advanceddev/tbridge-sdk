@@ -61,13 +61,12 @@ function normalizeBridgeUrl(url: string): string {
 }
 
 /**
- * Correlation id for bridge analytics / wallet routing.
- * Spec: optional `trace_id=<uuid>` on GET /events and POST /message.
- * Some bridges (e.g. Telegram) effectively expect it on RPC posts.
- */
-/**
  * UUID v7 (time-ordered) for `trace_id`.
  * Spec allows any uuid; Telegram bridge analytics expect this shape in practice.
+ *
+ * Unlike SessionCrypto (which fails hard without Web Crypto), trace ids are
+ * non-security correlation tokens — Math.random fallback is acceptable when
+ * crypto.getRandomValues is unavailable. Prefer Web Crypto when present.
  */
 function createTraceId(): string {
   const bytes = new Uint8Array(16);
@@ -387,10 +386,7 @@ function openHttpChannel(params: {
         throw new TBridgeError('NOT_CONNECTED', 'HTTP session not ready');
       }
       if (channelDead) {
-        throw new TBridgeError(
-          'HTTP_BRIDGE_ERROR',
-          'Bridge channel offline — reconnect required',
-        );
+        throw new TBridgeError('HTTP_BRIDGE_ERROR', 'Bridge channel offline — reconnect required');
       }
       const body = crypto.encrypt(JSON.stringify(request), walletClientId);
       const topic =
