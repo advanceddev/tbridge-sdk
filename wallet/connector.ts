@@ -224,6 +224,7 @@ export class TBridge {
           appName: injected.appName,
           connectRequest,
           timeoutMs: this.requestTimeoutMs,
+          hooks: this.createJsHooks(),
         });
 
         this.applyConnectSuccess(event, wallet, session);
@@ -250,6 +251,7 @@ export class TBridge {
           appName: wallet.app_name,
           connectRequest,
           timeoutMs: this.requestTimeoutMs,
+          hooks: this.createJsHooks(),
         });
         this.applyConnectSuccess(event, wallet, session);
         await saveLastWallet(this.storage, wallet.app_name);
@@ -368,6 +370,7 @@ export class TBridge {
           bridgeKey: injected.key,
           appName: injected.appName,
           timeoutMs: Math.min(this.requestTimeoutMs, 12_000),
+          hooks: this.createJsHooks(),
         });
         if (restored) {
           const wallet =
@@ -447,18 +450,35 @@ export class TBridge {
   async disconnect(): Promise<void> {
     assertBrowser();
     const session = this.session;
-    this.teardownSession();
-    this.setStatus({ status: 'disconnected' });
-    this.emitter.emit('disconnect', { reason: 'local' });
-    await clearPersistedSession(this.storage).catch(() => undefined);
+    // Clear local reference first so concurrent RPC is blocked, but do NOT
+    // destroy the session yet — bridges check `destroyed` and would skip the
+    // outbound disconnect notification to the wallet.
+    this.session = null;
+    this.account = null;
+    this.lastConnectItems = null;
+    this.device = null;
+    this.currentWallet = null;
 
     if (session) {
       try {
         await session.disconnect();
       } catch {
+        /* best-effort — wallet may already be gone */
+      }
+      try {
         session.destroy();
+      } catch {
+        /* ignore */
       }
     }
+    if (this.sessionCrypto) {
+      this.sessionCrypto.dispose();
+      this.sessionCrypto = null;
+    }
+
+    this.setStatus({ status: 'disconnected' });
+    this.emitter.emit('disconnect', { reason: 'local' });
+    await clearPersistedSession(this.storage).catch(() => undefined);
   }
 
   async sendTransaction(tx: SendTransactionRequest): Promise<{ boc: string }> {
@@ -593,12 +613,24 @@ export class TBridge {
         this.emitter.emit('bridgeHealth', health);
       },
       onWalletDisconnect: () => {
-        this.teardownSession();
-        this.setStatus({ status: 'disconnected' });
-        this.emitter.emit('disconnect', { reason: 'wallet' });
-        void clearPersistedSession(this.storage);
+        this.handleWalletDisconnect();
       },
     };
+  }
+
+  private createJsHooks() {
+    return {
+      onWalletDisconnect: () => {
+        this.handleWalletDisconnect();
+      },
+    };
+  }
+
+  private handleWalletDisconnect(): void {
+    this.teardownSession();
+    this.setStatus({ status: 'disconnected' });
+    this.emitter.emit('disconnect', { reason: 'wallet' });
+    void clearPersistedSession(this.storage);
   }
 
   private assertCanRpc(): void {
@@ -657,6 +689,23 @@ export class TBridge {
     }
     assertDeviceInfo(event.payload.device);
     const accountData = extractAccountFromConnect(event.payload.items);
+
+    // Enforce that the wallet returned the network we requested.
+    // NETWORK_MISMATCH is declared but was previously unused — silent
+    // mainnet/testnet mix-ups are unacceptable for enterprise fintech.
+    const expectedNetwork = NETWORK_ID[this.network];
+    if (accountData.network !== expectedNetwork) {
+      try {
+        session.destroy();
+      } catch {
+        /* ignore */
+      }
+      throw new TBridgeError(
+        'NETWORK_MISMATCH',
+        `Wallet returned network ${accountData.network}, expected ${expectedNetwork}`,
+      );
+    }
+
     const account: Account = {
       address: accountData.address,
       chain: accountData.network,

@@ -25,6 +25,8 @@ export class WalletDiscovery {
   private fetchPromise: Promise<WalletInfo[]> | null = null;
   private readonly registryUrl: string;
   private prefetchController: AbortController | null = null;
+  /** Fingerprint of the last icon set we already scheduled — avoids restarting prefetch on every getWallets(). */
+  private lastPrefetchKey: string | null = null;
 
   constructor(
     registryUrl: string = DEFAULT_WALLETS_REGISTRY_URL,
@@ -85,6 +87,15 @@ export class WalletDiscovery {
   private scheduleIconPrefetch(wallets: WalletInfo[]): void {
     if (typeof window === 'undefined' || wallets.length === 0) return;
 
+    const urls = collectWalletImageUrls(wallets);
+    // Stable key so repeated getWallets() (connect + restore) does not abort
+    // and restart the same download queue — saves mobile WebView traffic.
+    const key = urls.toSorted().join('|');
+    if (key === this.lastPrefetchKey && this.prefetchController) {
+      return;
+    }
+    this.lastPrefetchKey = key;
+
     try {
       this.prefetchController?.abort();
     } catch {
@@ -93,7 +104,6 @@ export class WalletDiscovery {
     const ac = new AbortController();
     this.prefetchController = ac;
 
-    const urls = collectWalletImageUrls(wallets);
     // Detached promise — errors must not surface to callers
     void prefetchImages(urls, { signal: ac.signal }).catch(() => undefined);
   }
@@ -121,13 +131,24 @@ export class WalletDiscovery {
   }
 
   private async fetchAndCache(): Promise<WalletInfo[]> {
-    const wallets = await fetchWalletsRegistry(this.registryUrl);
-    this.cache = wallets;
-    await this.writeCache(wallets);
-    return wallets;
+    try {
+      const wallets = await fetchWalletsRegistry(this.registryUrl);
+      this.cache = wallets;
+      await this.writeCache(wallets);
+      return wallets;
+    } catch (e) {
+      // Stale-if-error: prefer a previously valid list over hard failure when
+      // the CDN is temporarily unreachable (enterprise UX).
+      const stale = await this.readCache({ allowStale: true });
+      if (stale && stale.length > 0) {
+        this.cache = stale;
+        return stale;
+      }
+      throw e;
+    }
   }
 
-  private async readCache(): Promise<WalletInfo[] | null> {
+  private async readCache(opts?: { allowStale?: boolean }): Promise<WalletInfo[] | null> {
     if (!this.storage) return null;
     try {
       const raw = await this.storage.getItem(STORAGE_KEYS.WALLETS_CACHE);
@@ -139,7 +160,7 @@ export class WalletDiscovery {
       if (parsed.source && parsed.source !== this.registryUrl) {
         return null;
       }
-      if (Date.now() - parsed.fetchedAt > CACHE_TTL_MS) {
+      if (!opts?.allowStale && Date.now() - parsed.fetchedAt > CACHE_TTL_MS) {
         return null;
       }
       // Re-validate cached entries

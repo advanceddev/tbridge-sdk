@@ -9,6 +9,10 @@
  * Threat model: same-origin XSS can read localStorage. Mitigate with CSP on
  * the host app. sessionStorage-only mode is available via options if a product
  * prefers stricter volatility over UX.
+ *
+ * Optional extra layer: when `window.__WALLET_SESSION_SECRET__` is set, the
+ * session secret is further wrapped with PBKDF2-AES-GCM (v2: random per-blob
+ * salt + 600k iterations). This still does not stop XSS on the same origin.
  */
 
 import { PROTOCOL_VERSION, STORAGE_KEYS } from '../core/constants';
@@ -16,8 +20,12 @@ import { safeJsonParse } from '../core/security';
 import type { StorageAdapter } from '../core/storage';
 import type { PersistedSession } from '../core/types';
 
-const SESSION_SECRET_PREFIX = 'enc:v1:';
-const SESSION_SECRET_SALT = 'wallet-session-secret-salt';
+const SESSION_SECRET_PREFIX_V1 = 'enc:v1:';
+const SESSION_SECRET_PREFIX_V2 = 'enc:v2:';
+/** Legacy static salt — only used when reading v1 ciphertexts. */
+const SESSION_SECRET_SALT_V1 = 'wallet-session-secret-salt';
+/** OWASP 2023+ recommendation for PBKDF2-HMAC-SHA-256. One-shot cost on UI path. */
+const PBKDF2_ITERATIONS = 600_000;
 
 export type SessionPersistence = 'local' | 'session';
 
@@ -69,9 +77,17 @@ function getSessionEncryptionPassphrase(): string | null {
   return typeof maybe === 'string' && maybe.length > 0 ? maybe : null;
 }
 
-async function deriveAesKey(passphrase: string): Promise<CryptoKey | null> {
+async function deriveAesKey(
+  passphrase: string,
+  salt: Uint8Array,
+  iterations: number,
+): Promise<CryptoKey | null> {
   if (typeof window === 'undefined' || !window.crypto?.subtle) return null;
   const enc = new TextEncoder();
+  // Copy into a fresh ArrayBuffer so the type is compatible with BufferSource
+  // across TS lib.dom variants (SharedArrayBuffer vs ArrayBuffer).
+  const saltBuf = new Uint8Array(salt.byteLength);
+  saltBuf.set(salt);
   const baseKey = await window.crypto.subtle.importKey(
     'raw',
     enc.encode(passphrase),
@@ -80,7 +96,7 @@ async function deriveAesKey(passphrase: string): Promise<CryptoKey | null> {
     ['deriveKey'],
   );
   return window.crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: enc.encode(SESSION_SECRET_SALT), iterations: 100000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: saltBuf, iterations, hash: 'SHA-256' },
     baseKey,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -91,7 +107,9 @@ async function deriveAesKey(passphrase: string): Promise<CryptoKey | null> {
 async function encryptSecretForStorage(secret: string): Promise<string | null> {
   const passphrase = getSessionEncryptionPassphrase();
   if (!passphrase || typeof window === 'undefined' || !window.crypto?.getRandomValues) return null;
-  const key = await deriveAesKey(passphrase);
+  // Per-ciphertext random salt — prevents precomputed tables across installs.
+  const salt = window.crypto.getRandomValues(new Uint8Array(16));
+  const key = await deriveAesKey(passphrase, salt, PBKDF2_ITERATIONS);
   if (!key) return null;
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
   const enc = new TextEncoder();
@@ -100,23 +118,44 @@ async function encryptSecretForStorage(secret: string): Promise<string | null> {
     key,
     enc.encode(secret),
   );
-  return `${SESSION_SECRET_PREFIX}${bytesToBase64(iv)}:${bytesToBase64(new Uint8Array(ciphertext))}`;
+  return `${SESSION_SECRET_PREFIX_V2}${bytesToBase64(salt)}:${bytesToBase64(iv)}:${bytesToBase64(new Uint8Array(ciphertext))}`;
 }
 
 async function decryptSecretFromStorage(payload: string): Promise<string | null> {
   const passphrase = getSessionEncryptionPassphrase();
-  if (!passphrase || !payload.startsWith(SESSION_SECRET_PREFIX) || typeof window === 'undefined') {
+  if (!passphrase || typeof window === 'undefined') {
     return null;
   }
-  const body = payload.slice(SESSION_SECRET_PREFIX.length);
-  const parts = body.split(':');
-  if (parts.length !== 2) return null;
-  const iv = base64ToBytes(parts[0]);
-  const data = base64ToBytes(parts[1]);
-  const key = await deriveAesKey(passphrase);
-  if (!key) return null;
-  const plain = await window.crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
-  return new TextDecoder().decode(plain);
+
+  // v2: enc:v2:<salt>:<iv>:<ct>
+  if (payload.startsWith(SESSION_SECRET_PREFIX_V2)) {
+    const body = payload.slice(SESSION_SECRET_PREFIX_V2.length);
+    const parts = body.split(':');
+    if (parts.length !== 3) return null;
+    const salt = base64ToBytes(parts[0]!);
+    const iv = base64ToBytes(parts[1]!);
+    const data = base64ToBytes(parts[2]!);
+    const key = await deriveAesKey(passphrase, salt, PBKDF2_ITERATIONS);
+    if (!key) return null;
+    const plain = await window.crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+    return new TextDecoder().decode(plain);
+  }
+
+  // v1 (legacy): enc:v1:<iv>:<ct> with static salt + 100k iterations
+  if (payload.startsWith(SESSION_SECRET_PREFIX_V1)) {
+    const body = payload.slice(SESSION_SECRET_PREFIX_V1.length);
+    const parts = body.split(':');
+    if (parts.length !== 2) return null;
+    const iv = base64ToBytes(parts[0]!);
+    const data = base64ToBytes(parts[1]!);
+    const salt = new TextEncoder().encode(SESSION_SECRET_SALT_V1);
+    const key = await deriveAesKey(passphrase, salt, 100_000);
+    if (!key) return null;
+    const plain = await window.crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+    return new TextDecoder().decode(plain);
+  }
+
+  return null;
 }
 
 async function readEncryptedSessionSecret(key: string): Promise<string | null> {

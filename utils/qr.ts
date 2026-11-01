@@ -83,31 +83,40 @@ export async function renderQrToDataUrl(
         logo.addEventListener(
           'load',
           () => {
-            const centerX = px / 2;
-            const centerY = px / 2;
-            const outerRadius = logoSize / 2 + 6;
-            const innerRadius = logoSize / 2;
+            try {
+              const centerX = px / 2;
+              const centerY = px / 2;
+              const outerRadius = logoSize / 2 + 6;
+              const innerRadius = logoSize / 2;
 
-            ctx.save();
+              ctx.save();
 
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, outerRadius, 0, Math.PI * 2);
-            ctx.fillStyle = light;
-            ctx.fill();
+              ctx.beginPath();
+              ctx.arc(centerX, centerY, outerRadius, 0, Math.PI * 2);
+              ctx.fillStyle = light;
+              ctx.fill();
 
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, innerRadius, 0, Math.PI * 2);
-            ctx.clip();
-            ctx.drawImage(
-              logo,
-              centerX - innerRadius,
-              centerY - innerRadius,
-              innerRadius * 2,
-              innerRadius * 2,
-            );
+              ctx.beginPath();
+              ctx.arc(centerX, centerY, innerRadius, 0, Math.PI * 2);
+              ctx.clip();
+              ctx.drawImage(
+                logo,
+                centerX - innerRadius,
+                centerY - innerRadius,
+                innerRadius * 2,
+                innerRadius * 2,
+              );
 
-            ctx.restore();
-            resolve(canvas.toDataURL('image/png'));
+              ctx.restore();
+              resolve(canvas.toDataURL('image/png'));
+            } catch {
+              // SecurityError when logo host lacks CORS — fall back to QR without logo
+              try {
+                resolve(canvas.toDataURL('image/png'));
+              } catch {
+                resolve('');
+              }
+            }
           },
           { once: true },
         );
@@ -115,7 +124,11 @@ export async function renderQrToDataUrl(
         logo.addEventListener(
           'error',
           () => {
-            resolve(canvas.toDataURL('image/png'));
+            try {
+              resolve(canvas.toDataURL('image/png'));
+            } catch {
+              resolve('');
+            }
           },
           { once: true },
         );

@@ -188,9 +188,15 @@ function openHttpChannel(params: {
   let lastEventId: string | undefined;
   let eventSource: EventSource | null = null;
   let destroyed = false;
+  /** True after hard-stop (max SSE reconnects). Blocks further send() from hanging. */
+  let channelDead = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
-  const connectWaiters: Array<(ev: ConnectEvent) => void> = [];
+  const connectWaiters: Array<{
+    resolve: (ev: ConnectEvent) => void;
+    reject: (err: unknown) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }> = [];
 
   const setHealth = (h: BridgeHealth) => {
     params.hooks?.onHealth?.(h);
@@ -230,7 +236,8 @@ function openHttpChannel(params: {
         walletClientId = from.toLowerCase();
       }
       for (const w of connectWaiters.splice(0)) {
-        w(msg);
+        clearTimeout(w.timer);
+        w.resolve(msg);
       }
       return;
     }
@@ -309,7 +316,9 @@ function openHttpChannel(params: {
         setHealth('reconnecting');
         cleanupEs();
         if (reconnectAttempt >= SSE_MAX_RECONNECT_ATTEMPTS) {
-          // Hard-stop: no further reconnects, fail pending RPCs
+          // Hard-stop: no further reconnects, fail pending RPCs, mark channel dead
+          // so subsequent send() fails immediately instead of hanging on timeout.
+          channelDead = true;
           setHealth('offline');
           for (const [, p] of pending) {
             clearTimeout(p.timer);
@@ -318,6 +327,12 @@ function openHttpChannel(params: {
             );
           }
           pending.clear();
+          for (const w of connectWaiters.splice(0)) {
+            clearTimeout(w.timer);
+            w.reject(
+              new TBridgeError('HTTP_BRIDGE_ERROR', 'Bridge offline after max reconnect attempts'),
+            );
+          }
           return;
         }
         const delay = backoffMs(reconnectAttempt++);
@@ -335,17 +350,24 @@ function openHttpChannel(params: {
 
   const waitConnectEvent = (timeoutMs: number): Promise<ConnectEvent> =>
     new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const idx = connectWaiters.indexOf(onEvent);
-        if (idx >= 0) connectWaiters.splice(idx, 1);
-        reject(new TBridgeError('TIMEOUT', 'Wallet did not respond in time'));
-      }, timeoutMs);
-
-      const onEvent = (ev: ConnectEvent) => {
-        clearTimeout(timer);
-        resolve(ev);
+      if (destroyed || channelDead) {
+        reject(new TBridgeError('NOT_CONNECTED', 'Session destroyed'));
+        return;
+      }
+      const entry: {
+        resolve: (ev: ConnectEvent) => void;
+        reject: (err: unknown) => void;
+        timer: ReturnType<typeof setTimeout>;
+      } = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          const idx = connectWaiters.indexOf(entry);
+          if (idx >= 0) connectWaiters.splice(idx, 1);
+          reject(new TBridgeError('TIMEOUT', 'Wallet did not respond in time'));
+        }, timeoutMs),
       };
-      connectWaiters.push(onEvent);
+      connectWaiters.push(entry);
     });
 
   // Start SSE immediately (caller awaits openSse via connect/restore)
@@ -363,6 +385,12 @@ function openHttpChannel(params: {
       await sseReady;
       if (destroyed || !walletClientId) {
         throw new TBridgeError('NOT_CONNECTED', 'HTTP session not ready');
+      }
+      if (channelDead) {
+        throw new TBridgeError(
+          'HTTP_BRIDGE_ERROR',
+          'Bridge channel offline — reconnect required',
+        );
       }
       const body = crypto.encrypt(JSON.stringify(request), walletClientId);
       const topic =
@@ -427,6 +455,7 @@ function openHttpChannel(params: {
     destroy(): void {
       if (destroyed) return;
       destroyed = true;
+      channelDead = true;
       abort.abort();
       cleanupEs();
       for (const [, p] of pending) {
@@ -434,7 +463,10 @@ function openHttpChannel(params: {
         p.reject(new TBridgeError('NOT_CONNECTED', 'Session destroyed'));
       }
       pending.clear();
-      connectWaiters.length = 0;
+      for (const w of connectWaiters.splice(0)) {
+        clearTimeout(w.timer);
+        w.reject(new TBridgeError('NOT_CONNECTED', 'Session destroyed'));
+      }
       crypto.dispose();
       setHealth('offline');
     },

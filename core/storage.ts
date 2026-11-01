@@ -1,6 +1,16 @@
 /**
  * Abstract storage for session persistence.
  * Default implementation uses localStorage (browser-only).
+ *
+ * Threat model for AES-GCM at-rest encryption:
+ * - Protects against offline reads of localStorage (other process, device backup,
+ *   filesystem dump) when the page is not running.
+ * - Does NOT protect against same-origin XSS: any script on the origin can call
+ *   the same Web Crypto APIs and derive the key. For high-value dApps prefer
+ *   `sessionPersistence: 'session'` so secrets die with the tab.
+ * - Fallback key material is origin-bound (`${origin}:tbridge:storage:fallback`).
+ *   Hosts may set `window.__TBRIDGE_STORAGE_SECRET__` before first storage access
+ *   for a stronger secret; it is read once and cached.
  */
 
 import { assertBrowser, TBridgeError } from './errors';

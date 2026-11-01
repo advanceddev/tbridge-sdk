@@ -38,6 +38,26 @@ export interface OpenWalletLinkOptions {
 
 const MAX_URL_LEN = 2048;
 
+/** Schemes that must never be navigated to programmatically (XSS / injection). */
+const BLOCKED_LINK_SCHEMES = /^(javascript|data|vbscript|file|blob):/i;
+
+/**
+ * Defence-in-depth: reject dangerous URL schemes before any navigation.
+ * Allows http(s) and well-formed custom schemes (tc:, tonkeeper:, …).
+ */
+export function isSafeLinkScheme(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (BLOCKED_LINK_SCHEMES.test(parsed.protocol)) return false;
+    // http / https always ok; custom schemes must look like a normal scheme
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return true;
+    return /^[a-z][a-z0-9+.-]*:$/i.test(parsed.protocol);
+  } catch {
+    // Relative or opaque — reject for wallet opens (we always need absolute)
+    return false;
+  }
+}
+
 function safeUrl(href: string): URL | null {
   try {
     return new URL(href);
@@ -96,6 +116,9 @@ function defaultTarget(_env: RuntimeEnv): LinkTarget {
  * synthetic <a> click, then window.open, then location.assign.
  */
 export function openLink(href: string, target: LinkTarget = '_blank'): void {
+  if (!isSafeLinkScheme(href)) {
+    return;
+  }
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
   /**

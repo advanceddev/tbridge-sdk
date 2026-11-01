@@ -6,6 +6,7 @@
 import type { TBridge } from '../wallet/connector';
 import type { ConnectionStatus, WalletInfo } from '../core/types';
 import { TBridgeError } from '../core/errors';
+import { isSafeImageUrl } from '../core/security';
 import { renderQrToDataUrl } from '../utils/qr';
 import { detectRuntimeEnv } from '../utils/runtime-env';
 import {
@@ -146,7 +147,9 @@ export async function connectWithUi(
                 if (currentAttemptId !== connectAttemptId || settled || backRequested) {
                   return;
                 }
-                const qr = await renderQrToDataUrl(link, { logoUrl: wallet.image });
+                const logoUrl =
+                  wallet.image && isSafeImageUrl(wallet.image) ? wallet.image : undefined;
+                const qr = await renderQrToDataUrl(link, { logoUrl });
                 if (currentAttemptId !== connectAttemptId || settled || backRequested) {
                   return;
                 }
