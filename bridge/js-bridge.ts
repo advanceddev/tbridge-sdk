@@ -24,6 +24,10 @@ export interface JsBridgeSession {
   destroy(): void;
 }
 
+export interface JsSessionHooks {
+  onWalletDisconnect?: () => void;
+}
+
 /**
  * Open a session against an injected JS bridge.
  * Caller must pass a known bridge key from wallets list.
@@ -33,6 +37,7 @@ export async function connectJsBridge(params: {
   appName: string;
   connectRequest: ConnectRequest;
   timeoutMs: number;
+  hooks?: JsSessionHooks;
 }): Promise<{ event: ConnectEvent; session: JsBridgeSession }> {
   const bridge = getInjectedBridge(params.bridgeKey);
   if (!bridge) {
@@ -64,7 +69,8 @@ export async function connectJsBridge(params: {
   if (typeof bridge.listen === 'function') {
     const off = bridge.listen((ev: WalletEvent) => {
       if (ev.event === 'disconnect') {
-        // Consumer should react via connector status
+        // Propagate wallet-initiated disconnect so connector can update status.
+        params.hooks?.onWalletDisconnect?.();
       }
     });
     unsubscribers.push(off);
@@ -96,7 +102,9 @@ export async function connectJsBridge(params: {
           params: [],
           id: String(Date.now()),
         });
-      } catch {}
+      } catch {
+        /* best-effort */
+      }
       session.destroy();
     },
     destroy(): void {
@@ -105,7 +113,9 @@ export async function connectJsBridge(params: {
       for (const off of unsubscribers) {
         try {
           off();
-        } catch {}
+        } catch {
+          /* ignore */
+        }
       }
       unsubscribers.length = 0;
     },
@@ -118,6 +128,7 @@ export async function restoreJsBridge(params: {
   bridgeKey: string;
   appName: string;
   timeoutMs: number;
+  hooks?: JsSessionHooks;
 }): Promise<{ event: ConnectEvent; session: JsBridgeSession } | null> {
   const bridge = getInjectedBridge(params.bridgeKey);
   if (!bridge || typeof bridge.restoreConnection !== 'function') {
@@ -134,7 +145,18 @@ export async function restoreJsBridge(params: {
       return null;
     }
 
+    const unsubscribers: Array<() => void> = [];
     let destroyed = false;
+
+    if (typeof bridge.listen === 'function') {
+      const off = bridge.listen((ev: WalletEvent) => {
+        if (ev.event === 'disconnect') {
+          params.hooks?.onWalletDisconnect?.();
+        }
+      });
+      unsubscribers.push(off);
+    }
+
     const session: JsBridgeSession = {
       kind: 'js',
       bridgeKey: params.bridgeKey,
@@ -161,11 +183,22 @@ export async function restoreJsBridge(params: {
             params: [],
             id: String(Date.now()),
           });
-        } catch {}
+        } catch {
+          /* best-effort */
+        }
         session.destroy();
       },
       destroy() {
+        if (destroyed) return;
         destroyed = true;
+        for (const off of unsubscribers) {
+          try {
+            off();
+          } catch {
+            /* ignore */
+          }
+        }
+        unsubscribers.length = 0;
       },
     };
     return { event, session };

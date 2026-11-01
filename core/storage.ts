@@ -1,27 +1,32 @@
 /**
  * Abstract storage for session persistence.
  * Default implementation uses localStorage (browser-only).
+ *
+ * Threat model for AES-GCM at-rest encryption:
+ * - Protects against offline reads of localStorage (other process, device backup,
+ *   filesystem dump) when the page is not running.
+ * - Does NOT protect against same-origin XSS: any script on the origin can call
+ *   the same Web Crypto APIs and derive the key. For high-value dApps prefer
+ *   `sessionPersistence: 'session'` so secrets die with the tab.
+ * - Fallback key material is origin-bound (`${origin}:tbridge:storage:fallback`).
+ *   Hosts may set `window.__TBRIDGE_STORAGE_SECRET__` before first storage access
+ *   for a stronger secret; it is read once and cached.
  */
 
 import { assertBrowser, TBridgeError } from './errors';
+import { bytesToBase64, base64ToBytes } from './encoding';
 
 const ENC_PREFIX = 'enc:v1:';
 const IV_LENGTH = 12;
 let cachedStorageKey: Promise<CryptoKey> | null = null;
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
-}
-
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
+/**
+ * Derive the AES-GCM key used for at-rest storage encryption.
+ *
+ * `window.__TBRIDGE_STORAGE_SECRET__` is read once on first access and cached
+ * for the lifetime of the page. Setting the global after the first
+ * getItem/setItem has no effect — inject the secret before creating TBridge.
+ */
 async function getStorageCryptoKey(): Promise<CryptoKey> {
   if (!cachedStorageKey) {
     cachedStorageKey = (async () => {

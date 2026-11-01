@@ -54,10 +54,10 @@ export function parseWalletEntry(value: unknown): WalletInfo | null {
     features,
   };
 
-  if (typeof v.universal_url === 'string' && v.universal_url) {
+  if (typeof v.universal_url === 'string' && v.universal_url && isSafeWalletLink(v.universal_url)) {
     info.universal_url = v.universal_url;
   }
-  if (typeof v.deepLink === 'string' && v.deepLink) {
+  if (typeof v.deepLink === 'string' && v.deepLink && isSafeWalletLink(v.deepLink)) {
     info.deepLink = v.deepLink;
   }
   if (typeof v.tondns === 'string' && v.tondns) {
@@ -117,6 +117,19 @@ function isHttpUrl(url: string): boolean {
   }
 }
 
+/** Reject javascript:/data:/vbscript: and other dangerous schemes from registry. */
+function isSafeWalletLink(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (/^(javascript|data|vbscript|file|blob):/i.test(u.protocol)) return false;
+    if (u.protocol === 'https:' || u.protocol === 'http:') return true;
+    // Custom schemes used by wallets (tc:, tonkeeper:, tonhub:, …)
+    return /^[a-z][a-z0-9+.-]*:$/i.test(u.protocol);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Parse full registry JSON (array of wallets).
  * Throws if not an array or if zero valid wallets remain.
@@ -171,6 +184,7 @@ export async function fetchWalletsRegistry(url: string): Promise<WalletInfo[]> {
       headers: { Accept: 'application/json' },
       credentials: 'omit',
       cache: 'no-cache',
+      signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
     throw new TBridgeError('BRIDGE_UNAVAILABLE', `Failed to fetch wallets registry from ${url}`, e);

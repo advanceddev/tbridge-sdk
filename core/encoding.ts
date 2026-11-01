@@ -64,16 +64,22 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return result;
 }
 
-export function base64ToBytes(b64: string): Uint8Array {
-  if (typeof atob === 'function') {
-    const binary = atob(b64);
-    const out = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      out[i] = binary.charCodeAt(i);
-    }
-    return out;
+export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
+  if (typeof atob !== 'function') {
+    throw new Error('atob is not available');
   }
-  throw new Error('atob is not available');
+  // Accept standard and URL-safe base64 (with or without padding).
+  const clean = b64.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = clean.length % 4 === 0 ? 0 : 4 - (clean.length % 4);
+  const binary = atob(clean + '='.repeat(pad));
+  // Explicit ArrayBuffer backing so the result is assignable to BufferSource
+  // under TS lib.dom (Uint8Array<ArrayBufferLike> is not).
+  const buffer = new ArrayBuffer(binary.length);
+  const out = new Uint8Array(buffer);
+  for (let i = 0; i < binary.length; i++) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
 }
 
 /** URL-safe base64 without padding — for deep-link `r` and `e` params */

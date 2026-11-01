@@ -50,7 +50,12 @@ export class TypedEventEmitter<EventMap extends Record<string, unknown>> {
     for (const handler of snapshot) {
       try {
         (handler as Handler<EventMap[K]>)(payload);
-      } catch {}
+      } catch (err) {
+        // Never let a consumer handler break the emit loop; surface for debugging.
+        if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+          console.warn('[TBridge] Event handler threw:', err);
+        }
+      }
     }
   }
 

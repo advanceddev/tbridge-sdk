@@ -158,12 +158,39 @@ export function showActionSheet(options: ActionSheetOptions): ActionSheetHandle 
   const close = (): void => {
     if (closed) return;
     closed = true;
+    document.removeEventListener('keydown', onKey);
     overlay.remove();
   };
 
   const cancel = (): void => {
     close();
     options.onCancel();
+  };
+
+  const onKey = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancel();
+      return;
+    }
+    // Minimal focus trap: keep Tab cycling inside the sheet controls.
+    if (event.key === 'Tab') {
+      const focusable = [closeInner, closeOuter, openBtn].filter(
+        (el) => el.offsetParent !== null || el === document.activeElement,
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (event.shiftKey) {
+        if (document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
   };
 
   closeInner.addEventListener('click', cancel);
@@ -181,6 +208,8 @@ export function showActionSheet(options: ActionSheetOptions): ActionSheetHandle 
     // Do not pass raw deepLink — id-only custom schemes are rejected by Tonkeeper
     openWalletLink(link, { forceUniversal: true });
   });
+
+  document.addEventListener('keydown', onKey);
 
   if (isDesktop()) {
     closeOuter.focus();

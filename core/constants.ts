@@ -27,6 +27,11 @@ export const STORAGE_KEYS = {
   SESSION_SECRET: `${STORAGE_PREFIX}session-secret`,
   LAST_WALLET: `${STORAGE_PREFIX}last-wallet`,
   WALLETS_CACHE: `${STORAGE_PREFIX}wallets-cache`,
+  /**
+   * Monotonic RPC id counter — separate from the session blob so each
+   * sendTransaction / signData does not re-encrypt the full session.
+   */
+  LAST_RPC_ID: `${STORAGE_PREFIX}last-rpc-id`,
 } as const;
 
 /** Default request timeout (ms) */

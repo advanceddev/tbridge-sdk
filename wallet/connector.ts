@@ -53,6 +53,8 @@ import { showActionSheet, type ActionSheetHandle } from '../ui/action-sheet';
 import {
   clearPersistedSession,
   loadPersistedSession,
+  loadLastRpcId,
+  saveLastRpcId,
   saveLastWallet,
   loadLastWallet,
   savePersistedSession,
@@ -224,6 +226,7 @@ export class TBridge {
           appName: injected.appName,
           connectRequest,
           timeoutMs: this.requestTimeoutMs,
+          hooks: this.createJsHooks(),
         });
 
         this.applyConnectSuccess(event, wallet, session);
@@ -250,6 +253,7 @@ export class TBridge {
           appName: wallet.app_name,
           connectRequest,
           timeoutMs: this.requestTimeoutMs,
+          hooks: this.createJsHooks(),
         });
         this.applyConnectSuccess(event, wallet, session);
         await saveLastWallet(this.storage, wallet.app_name);
@@ -314,7 +318,9 @@ export class TBridge {
         origin: currentOrigin(),
         secretKeyHex: keys.secretKeyHex,
         lastRpcId: this.requestId,
+        connectItems: this.lastConnectItems ?? undefined,
       });
+      await saveLastRpcId(this.storage, this.requestId);
       await saveLastWallet(this.storage, wallet.app_name);
 
       return this.status;
@@ -368,6 +374,7 @@ export class TBridge {
           bridgeKey: injected.key,
           appName: injected.appName,
           timeoutMs: Math.min(this.requestTimeoutMs, 12_000),
+          hooks: this.createJsHooks(),
         });
         if (restored) {
           const wallet =
@@ -421,11 +428,19 @@ export class TBridge {
 
       this.session = session;
       this.account = persisted.account;
-      if (typeof persisted.lastRpcId === 'number' && persisted.lastRpcId >= 0) {
+      // Prefer dedicated cheap key; fall back to legacy field on the session blob.
+      const rpcFromKey = await loadLastRpcId(this.storage);
+      if (rpcFromKey !== null) {
+        this.requestId = rpcFromKey;
+      } else if (typeof persisted.lastRpcId === 'number' && persisted.lastRpcId >= 0) {
         this.requestId = persisted.lastRpcId;
       }
       this.device = persisted.device;
       this.currentWallet = wallet;
+      // Restore connect item replies (ton_proof etc.) for lazy verification after reload.
+      if (Array.isArray(persisted.connectItems) && persisted.connectItems.length > 0) {
+        this.lastConnectItems = persisted.connectItems;
+      }
       this.setStatus({
         status: 'connected',
         account: persisted.account,
@@ -447,18 +462,35 @@ export class TBridge {
   async disconnect(): Promise<void> {
     assertBrowser();
     const session = this.session;
-    this.teardownSession();
-    this.setStatus({ status: 'disconnected' });
-    this.emitter.emit('disconnect', { reason: 'local' });
-    await clearPersistedSession(this.storage).catch(() => undefined);
+    // Clear local reference first so concurrent RPC is blocked, but do NOT
+    // destroy the session yet — bridges check `destroyed` and would skip the
+    // outbound disconnect notification to the wallet.
+    this.session = null;
+    this.account = null;
+    this.lastConnectItems = null;
+    this.device = null;
+    this.currentWallet = null;
 
     if (session) {
       try {
         await session.disconnect();
       } catch {
+        /* best-effort — wallet may already be gone */
+      }
+      try {
         session.destroy();
+      } catch {
+        /* ignore */
       }
     }
+    if (this.sessionCrypto) {
+      this.sessionCrypto.dispose();
+      this.sessionCrypto = null;
+    }
+
+    this.setStatus({ status: 'disconnected' });
+    this.emitter.emit('disconnect', { reason: 'local' });
+    await clearPersistedSession(this.storage).catch(() => undefined);
   }
 
   async sendTransaction(tx: SendTransactionRequest): Promise<{ boc: string }> {
@@ -531,6 +563,8 @@ export class TBridge {
 
   /**
    * Sign opaque data (text / binary / cell) without broadcasting.
+   * Shows the same action sheet as sendTransaction on HTTP sessions so the
+   * wallet process is woken on mobile (push is often missing).
    */
   async signData(
     payload: SignDataPayload,
@@ -546,22 +580,55 @@ export class TBridge {
       ...payload,
     };
 
-    const response = await this.session!.send({
-      method: 'signData',
-      params: [JSON.stringify(body)],
-      id: this.nextId(),
+    const clientId =
+      this.sessionCrypto?.clientId ??
+      (this.session?.kind === 'http' ? this.session.clientId : '') ??
+      '';
+
+    let sheet: ActionSheetHandle | null = null;
+    let rejectCancel: ((err: TBridgeError) => void) | null = null;
+    const cancelPromise = new Promise<never>((_, reject) => {
+      rejectCancel = reject;
     });
 
-    if ('error' in response) {
-      throw mapWalletError(response.error.code, response.error.message);
+    if (this.session?.kind === 'http' && clientId) {
+      sheet = showActionSheet({
+        locale: this.locale,
+        theme: this.theme,
+        wallet: this.currentWallet,
+        clientId,
+        manifestUrl: this.manifestUrl,
+        onCancel: () => {
+          rejectCancel?.(new TBridgeError('USER_REJECTED', 'User rejected the request'));
+        },
+      });
     }
 
-    if (typeof response.result === 'string') {
+    try {
+      const response = await Promise.race([
+        this.session!.send({
+          method: 'signData',
+          params: [JSON.stringify(body)],
+          id: this.nextId(),
+        }),
+        cancelPromise,
+      ]);
+
+      sheet?.close();
+
+      if ('error' in response) {
+        throw mapWalletError(response.error.code, response.error.message);
+      }
+
       await this.bumpPersistedRpcId();
-      return { signature: response.result };
+      if (typeof response.result === 'string') {
+        return { signature: response.result };
+      }
+      return response.result as { signature: string };
+    } catch (e) {
+      sheet?.close();
+      throw e;
     }
-    await this.bumpPersistedRpcId();
-    return response.result as { signature: string };
   }
 
   destroy(): void {
@@ -593,12 +660,24 @@ export class TBridge {
         this.emitter.emit('bridgeHealth', health);
       },
       onWalletDisconnect: () => {
-        this.teardownSession();
-        this.setStatus({ status: 'disconnected' });
-        this.emitter.emit('disconnect', { reason: 'wallet' });
-        void clearPersistedSession(this.storage);
+        this.handleWalletDisconnect();
       },
     };
+  }
+
+  private createJsHooks() {
+    return {
+      onWalletDisconnect: () => {
+        this.handleWalletDisconnect();
+      },
+    };
+  }
+
+  private handleWalletDisconnect(): void {
+    this.teardownSession();
+    this.setStatus({ status: 'disconnected' });
+    this.emitter.emit('disconnect', { reason: 'wallet' });
+    void clearPersistedSession(this.storage);
   }
 
   private assertCanRpc(): void {
@@ -623,13 +702,8 @@ export class TBridge {
   }
 
   private async bumpPersistedRpcId(): Promise<void> {
-    try {
-      const current = await loadPersistedSession(this.storage);
-      if (!current) return;
-      await savePersistedSession(this.storage, { ...current, lastRpcId: this.requestId });
-    } catch {
-      /* non-fatal */
-    }
+    // Dedicated key — no full session re-encrypt on every RPC.
+    await saveLastRpcId(this.storage, this.requestId);
   }
 
   /**
@@ -657,6 +731,23 @@ export class TBridge {
     }
     assertDeviceInfo(event.payload.device);
     const accountData = extractAccountFromConnect(event.payload.items);
+
+    // Enforce that the wallet returned the network we requested.
+    // NETWORK_MISMATCH is declared but was previously unused — silent
+    // mainnet/testnet mix-ups are unacceptable for enterprise fintech.
+    const expectedNetwork = NETWORK_ID[this.network];
+    if (accountData.network !== expectedNetwork) {
+      try {
+        session.destroy();
+      } catch {
+        /* ignore */
+      }
+      throw new TBridgeError(
+        'NETWORK_MISMATCH',
+        `Wallet returned network ${accountData.network}, expected ${expectedNetwork}`,
+      );
+    }
+
     const account: Account = {
       address: accountData.address,
       chain: accountData.network,

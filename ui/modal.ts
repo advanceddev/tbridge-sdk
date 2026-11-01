@@ -66,11 +66,14 @@ function capitalizePlatform(platform: string): string {
   return platform.charAt(0).toUpperCase() + platform.slice(1).toLowerCase();
 }
 
-let onKey: (event: KeyboardEvent) => void = () => undefined;
 const isDesktop = (): boolean => window.matchMedia('(min-width: 520px)').matches;
 
 export function openWalletModal(options: WalletModalOptions): WalletModalHandle {
   ensureStyles();
+
+  // Local per-instance key handler — module-level would race when two modals open.
+  // Assigned after close/aboutScrim exist (see below); must stay in this scope.
+  let onKey!: (event: KeyboardEvent) => void;
 
   let locale: TBridgeLocale = options.locale ?? 'en';
   let theme: TBridgeTheme = options.theme ?? 'dark';

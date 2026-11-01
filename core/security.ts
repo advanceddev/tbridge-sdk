@@ -14,32 +14,19 @@ const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /**
  * JSON.parse with prototype-pollution hardening.
- * Strips forbidden keys from objects (shallow + nested).
+ * A single reviver walk strips forbidden keys at every level (JSON.parse
+ * invokes the reviver bottom-up). Building a second null-prototype tree was
+ * redundant and doubled CPU/memory on every bridge message / registry parse.
  */
 export function safeJsonParse<T = unknown>(raw: string, label = 'payload'): T {
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw, (key, value) => {
+    return JSON.parse(raw, (key, value) => {
       if (FORBIDDEN_KEYS.has(key)) return undefined;
       return value;
-    });
+    }) as T;
   } catch (e) {
     throw new TBridgeError('INVALID_PAYLOAD', `${label} is not valid JSON`, e);
   }
-  return sanitizeValue(parsed) as T;
-}
-
-function sanitizeValue(value: unknown): unknown {
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) {
-    return value.map(sanitizeValue);
-  }
-  const out: Record<string, unknown> = Object.create(null);
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    if (FORBIDDEN_KEYS.has(k)) continue;
-    out[k] = sanitizeValue(v);
-  }
-  return out;
 }
 
 /**
