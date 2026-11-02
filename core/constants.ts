@@ -3,7 +3,15 @@
  * Never change storage key prefix without migration path.
  */
 
-export const TBRIDGE_VERSION = '0.3.0' as const;
+/**
+ * Package version. Injected at build time from package.json via Vite `define`
+ * (`__TBRIDGE_VERSION__`). Fallback keeps unit tests / unbundled runs working.
+ */
+declare const __TBRIDGE_VERSION__: string | undefined;
+export const TBRIDGE_VERSION: string =
+  typeof __TBRIDGE_VERSION__ !== 'undefined' && __TBRIDGE_VERSION__
+    ? __TBRIDGE_VERSION__
+    : '0.0.0-dev';
 
 /** Wire protocol version spoken with wallets */
 export const PROTOCOL_VERSION = 2 as const;
