@@ -11,7 +11,8 @@
 
 const STYLE_ID = 'tbridge-ui-styles';
 
-const CSS = `
+/** Build marker: Vite plugin minifies this template literal in production builds. */
+const CSS = /*@tbridge-css*/ `
 /* ————————————————————————————————
    Scroll lock
 ———————————————————————————————— */
@@ -156,6 +157,7 @@ body.tbridge-scroll-lock {
 
 /* Модальное окно */
 .tbridge-modal {
+  position: relative;
   width: 100%;
   max-height: min(88vh, 640px);
   background: var(--tb-bg);
@@ -498,6 +500,8 @@ body.tbridge-scroll-lock {
   .tbridge-body {
     /* Fits QR (200) + chip + actions without growing the shell */
     min-height: 420px;
+    /* Clearance for desktop scroll-edge fade */
+    padding-bottom: 40px;
   }
 }
 
@@ -514,7 +518,7 @@ body.tbridge-scroll-lock {
   gap: 8px 6px;
   width: 100%;
   box-sizing: border-box;
-  padding-bottom: 8px;
+  /* padding-bottom comes from .tbridge-body (scroll-edge clearance) */
   align-content: start;
   animation: tbridge-content-in 0.28s ease-out;
 }
@@ -618,19 +622,95 @@ body.tbridge-scroll-lock {
   grid-column: 1 / -1;
 }
 
-/* Футер */
+/*
+ * Scroll-edge footer — desktop only (≥520px).
+ * Mobile WebViews handle masked backdrop-filter poorly; no fade there.
+ */
 .tbridge-footer {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 10px 8px 12px;
-  text-align: center;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--tb-faint);
-  letter-spacing: 0.02em;
+  display: none;
+  pointer-events: none;
   user-select: none;
+}
+
+@media (min-width: 520px) {
+  .tbridge-footer {
+    display: block;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    height: 64px;
+    background: linear-gradient(
+      to top,
+      var(--tb-bg) 0%,
+      rgba(0, 0, 0, 0) 100%
+    );
+  }
+
+  /* Waiting / QR: hide fade so Copy link stays above the edge */
+  .tbridge-modal:has(.tbridge-waiting) .tbridge-footer {
+    display: none;
+  }
+
+  .tbridge-modal:has(.tbridge-waiting) .tbridge-body {
+    padding-bottom: 12px;
+  }
+
+  .tbridge-overlay[data-tbridge-theme="dark"] .tbridge-footer {
+    background: linear-gradient(
+      to top,
+      var(--tb-bg) 0%,
+      rgba(19, 20, 24, 0.5) 28%,
+      rgba(19, 20, 24, 0.16) 55%,
+      rgba(19, 20, 24, 0) 100%
+    );
+  }
+
+  .tbridge-overlay[data-tbridge-theme="light"] .tbridge-footer {
+    background: linear-gradient(
+      to top,
+      var(--tb-bg) 0%,
+      rgba(255, 255, 255, 0.55) 28%,
+      rgba(255, 255, 255, 0.18) 55%,
+      rgba(255, 255, 255, 0) 100%
+    );
+  }
+
+  .tbridge-footer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    mask-image: linear-gradient(
+      to top,
+      #000 0%,
+      rgba(0, 0, 0, 0.7) 30%,
+      rgba(0, 0, 0, 0.25) 60%,
+      transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+      to top,
+      #000 0%,
+      rgba(0, 0, 0, 0.7) 30%,
+      rgba(0, 0, 0, 0.25) 60%,
+      transparent 100%
+    );
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .tbridge-footer::after {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .tbridge-footer::after {
+      display: none;
+    }
+  }
 }
 
 .tbridge-github {
@@ -705,7 +785,7 @@ body.tbridge-scroll-lock {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   padding: 8px 8px 20px;
   text-align: center;
   gap: 10px;
@@ -714,58 +794,29 @@ body.tbridge-scroll-lock {
   animation: tbridge-content-in 0.28s ease-out;
 }
 
+/* Waiting screen: name only — no icon/platforms/chrome (QR already brands the wallet) */
 .tbridge-wallet-chip {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 12px;
-  border-radius: 16px;
-  background: var(--tb-surface);
-  box-shadow: inset 0 0 0 1px var(--tb-border);
-  text-align: left;
-}
-
-.tbridge-wallet-chip-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  object-fit: cover;
-  background: var(--tb-icon-bg);
-  box-shadow: var(--tb-shadow-icon);
-  flex-shrink: 0;
-}
-
-.tbridge-wallet-chip-icon--ph {
-  display: grid;
-  place-items: center;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--tb-muted);
-}
-
-.tbridge-wallet-chip-meta {
-  min-width: 0;
-  flex: 1;
+  padding: 4px 12px 2px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  text-align: center;
 }
 
 .tbridge-wallet-chip-name {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: -0.01em;
+  color: var(--tb-fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.tbridge-wallet-chip-platforms {
-  font-size: 12px;
-  color: var(--tb-muted);
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .tbridge-waiting p {
@@ -1186,11 +1237,8 @@ body.tbridge-scroll-lock {
 
 export function ensureStyles(): void {
   if (typeof document === 'undefined') return;
-  const existing = document.getElementById(STYLE_ID);
-  if (existing) {
-    existing.textContent = CSS;
-    return;
-  }
+  // Idempotent: never re-parse / re-assign the same stylesheet.
+  if (document.getElementById(STYLE_ID)) return;
   const node = document.createElement('style');
   node.id = STYLE_ID;
   node.textContent = CSS;
