@@ -74,11 +74,7 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
   const header = el('div', 'tbridge-header');
   const headerStart = el('div', 'tbridge-header-start');
 
-  const title = el(
-    'h2',
-    'tbridge-title',
-    state.fixedTitle ?? t(state.locale, 'modal.title'),
-  );
+  const title = el('h2', 'tbridge-title', state.fixedTitle ?? t(state.locale, 'modal.title'));
 
   const closeBtn = el('button', 'tbridge-close') as HTMLButtonElement;
   closeBtn.type = 'button';
