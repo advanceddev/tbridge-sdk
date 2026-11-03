@@ -92,7 +92,7 @@ export function validateSendTransaction(tx: SendTransactionRequest): void {
   if (typeof tx.validUntil !== 'number' || tx.validUntil <= 0) {
     throw new TBridgeError('INVALID_PAYLOAD', 'validUntil must be a positive unix timestamp');
   }
-  // rpc.md:90 — Unix *seconds*. A Date.now()-style value (ms) would read as a
+  // Unix *seconds*. A Date.now()-style value (ms) would read as a
   // deadline tens of millennia away, i.e. a request that never expires.
   if (tx.validUntil >= 1e12) {
     throw new TBridgeError('INVALID_PAYLOAD', 'validUntil must be in seconds, not milliseconds');
@@ -116,9 +116,9 @@ export function validateSendTransaction(tx: SendTransactionRequest): void {
 }
 
 /**
- * Spec rpc.md:56: wallet event ids MUST strictly increase; the dApp MUST reject
+ * Wallet event ids MUST strictly increase; the dApp MUST reject
  * events that violate this. Returns a predicate: false = stale event, drop it.
- * Events without a numeric id are let through (same as @tonconnect/sdk).
+ * Events without a numeric id are let through.
  */
 export function createEventIdGate(baseline: number | null = null): (id: unknown) => boolean {
   let last = baseline;
@@ -138,9 +138,9 @@ function findFeature(features: readonly unknown[], name: string): Record<string,
 }
 
 /**
- * Spec connect.md:103: "SDKs MUST treat absent features as unsupported and refuse
- * to send the corresponding request." Mirrors @tonconnect/sdk checkSendTransactionSupport,
- * including the legacy string feature 'SendTransaction'.
+ * "SDKs MUST treat absent features as unsupported and refuse
+ * to send the corresponding request.".
+ * Including the legacy string feature 'SendTransaction'.
  */
 export function assertSendTransactionSupported(
   features: readonly unknown[],
@@ -164,7 +164,7 @@ export function assertSendTransactionSupported(
   }
 }
 
-/** Spec connect.md:103 — SignData must be listed with the requested payload type. */
+/** SignData must be listed with the requested payload type. */
 export function assertSignDataSupported(features: readonly unknown[], type: string): void {
   const types = findFeature(features, 'SignData')?.types;
   if (!Array.isArray(types) || !types.includes(type)) {

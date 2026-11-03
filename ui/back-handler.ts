@@ -1,5 +1,5 @@
 /**
- * Platform "back" for overlays (ton-connect/sdk#70).
+ * Platform "back" for overlays.
  *
  * - Telegram Mini App: Telegram.WebApp.BackButton (also what Android's system
  *   back triggers inside Telegram). The host's own BackButton state is restored.

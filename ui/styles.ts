@@ -1234,8 +1234,8 @@ body.tbridge-scroll-lock {
   }
 }
 
-/* Top-layer host (<dialog>.showModal) — above host modals/popovers (ton-connect/sdk#185).
-   pointer-events: hosts (e.g. radix) set body{pointer-events:none} (ton-connect/sdk#568). */
+/* Top-layer host (<dialog>.showModal) — above host modals/popovers.
+   pointer-events: hosts (e.g. radix) set body{pointer-events:none} */
 .tbridge-top {
   position: fixed;
   inset: 0;
@@ -1256,7 +1256,7 @@ body.tbridge-scroll-lock {
 .tbridge-overlay,
 .tbridge-sheet-overlay {
   pointer-events: auto;
-  /* Safe areas (ton-connect/sdk#577): device notch / home bar (env) and, inside a
+  /* Safe areas: device notch / home bar (env) and, inside a
      Telegram Mini App, Telegram's own insets (CSS vars set by telegram-web-app.js). */
   --tb-inset-top: max(
     env(safe-area-inset-top, 0px),

@@ -1,8 +1,6 @@
 /**
  * Connect links to Telegram-hosted wallets (t.me / tg:). Telegram hands a Mini App
- * only `startapp` (≤ 512 chars, [A-Za-z0-9_-]); plain v/id/r query params are lost on
- * Telegram Desktop (Windows) — the connect never shows. Format = @tonconnect/sdk
- * generateTGUniversalLink, confirmed working on Telegram Desktop for Windows.
+ * only `startapp` (≤ 512 chars, [A-Za-z0-9_-]).
  */
 import { describe, expect, it } from 'vitest';
 import { buildConnectLink } from '../bridge/http-bridge';

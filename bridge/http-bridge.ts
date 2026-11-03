@@ -161,8 +161,7 @@ function encodeParam(value: string): string {
 /**
  * Telegram passes a Mini App nothing but `startapp` (<= 512 chars, [A-Za-z0-9_-]);
  * other query params are dropped by some clients (Telegram Desktop on Windows: the
- * connect never shows). Pack the whole query into it — same wire as @tonconnect/sdk
- * (generateTGUniversalLink / encodeTelegramUrlParameters), which wallets decode.
+ * connect never shows).
  */
 function telegramStartAppLink(base: string, query: string): string {
   const startapp =
@@ -185,7 +184,7 @@ function telegramStartAppLink(base: string, query: string): string {
 }
 
 /**
- * Build wallet connect universal / deep link (deeplinks.md).
+ * Build wallet connect universal / deep link.
  * `r` is the URL-encoded ConnectRequest JSON. Telegram-hosted wallets get the
  * startapp form; launch path (TMA bridge vs browser) is handled by open-wallet-link.
  */
@@ -203,7 +202,7 @@ export function buildConnectLink(params: {
     ['id', params.clientId],
     ['r', JSON.stringify(params.connectRequest)],
   ];
-  // Telegram: the return target is Telegram itself; same as @tonconnect/sdk, no ret.
+  // Telegram: the return target is Telegram itself.
   if (params.ret && !telegram) query.push(['ret', params.ret]);
   const qs = query.map(([k, v]) => `${k}=${encodeParam(v)}`).join('&');
   if (telegram) return telegramStartAppLink(base, qs);
@@ -227,7 +226,7 @@ function openHttpChannel(params: {
   appName: string;
   sessionCrypto: SessionCrypto;
   walletClientId: string | null;
-  /** Last processed wallet event id (persisted) — baseline for rpc.md:56 ordering */
+  /** Last processed wallet event id (persisted). */
   lastWalletEventId?: number | null;
   timeoutMs: number;
   hooks?: HttpSessionHooks;
@@ -297,7 +296,7 @@ function openHttpChannel(params: {
       'event' in msg &&
       !acceptEventId((msg as { id?: unknown }).id)
     ) {
-      return; // stale / replayed wallet event (rpc.md:56)
+      return; // stale / replayed wallet event
     }
 
     if (isConnectEvent(msg)) {
@@ -493,7 +492,6 @@ function openHttpChannel(params: {
       return walletClientId ?? '';
     },
     async send(request: AppRequest): Promise<WalletResponse> {
-      // A failed first open must not poison a channel that has reconnected since.
       if (!everOpened) await sseReady;
       if (destroyed || !walletClientId) {
         throw new TBridgeError('NOT_CONNECTED', 'HTTP session not ready');
@@ -509,7 +507,6 @@ function openHttpChannel(params: {
         }, params.timeoutMs);
         pending.set(request.id, { resolve, reject, timer });
       });
-      // destroy() during the POST may reject it before the caller awaits it.
       responsePromise.catch(() => undefined);
 
       try {

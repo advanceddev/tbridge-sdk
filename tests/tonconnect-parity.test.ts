@@ -1,6 +1,5 @@
 /**
  * Regression tests: TON Connect spec requirements (ton-blockchain/ton-connect spec/*.md)
- * and bugs reported against @tonconnect/sdk (github.com/ton-connect/sdk/issues).
  */
 import nacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -58,7 +57,7 @@ function addExtensions() {
 }
 
 // ---------------------------------------------------------------------------
-// connect.md:103 — "SDKs MUST treat absent features as unsupported and refuse
+// "SDKs MUST treat absent features as unsupported and refuse
 // to send the corresponding request."
 // ---------------------------------------------------------------------------
 describe('wallet feature checks (connect.md:103)', () => {
@@ -128,7 +127,7 @@ describe('wallet feature checks (connect.md:103)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// rpc.md:56 — "for every subsequent event the id MUST be strictly greater than
+// "for every subsequent event the id MUST be strictly greater than
 // the last id the dApp has processed … the dApp MUST reject events that violate this."
 // ---------------------------------------------------------------------------
 describe('wallet event id ordering (rpc.md:56)', () => {
@@ -200,7 +199,7 @@ describe('wallet event id ordering (rpc.md:56)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// connect.md:165-166 — connect error codes 2 MANIFEST_NOT_FOUND, 3 MANIFEST_CONTENT_ERROR
+// Connect error codes 2 MANIFEST_NOT_FOUND, 3 MANIFEST_CONTENT_ERROR
 // ---------------------------------------------------------------------------
 describe('connect error codes (connect.md:163-169)', () => {
   it.each([2, 3])('maps wallet error %i to INVALID_MANIFEST', async (code) => {
@@ -211,7 +210,7 @@ describe('connect error codes (connect.md:163-169)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ton-connect/sdk#137 — two wallet extensions installed at once
+// Two wallet extensions installed at once
 // ---------------------------------------------------------------------------
 const remembered = async () => connectEvent(5);
 
@@ -275,7 +274,7 @@ describe('multiple injected wallets (ton-connect/sdk#137)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ton-connect/sdk#569 — disconnect does not propagate across tabs
+// Disconnect does not propagate across tabs
 // ---------------------------------------------------------------------------
 describe('cross-tab disconnect (ton-connect/sdk#569)', () => {
   it('drops the connection when another tab removes the persisted session', async () => {
@@ -314,7 +313,7 @@ describe('cross-tab disconnect (ton-connect/sdk#569)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ton-connect/sdk#575 — wallet list unavailable; reference SDK uses FALLBACK_WALLETS_LIST
+// Wallet list unavailable; reference SDK uses FALLBACK_WALLETS_LIST
 // ---------------------------------------------------------------------------
 const offline = () => {
   g.fetch = vi.fn(async () => {
@@ -334,7 +333,7 @@ describe('wallets registry fallback (ton-connect/sdk#575)', () => {
   });
 
   // Product decision: a custom registry is curated by the host — never substitute
-  // wallets it may have deliberately excluded (stricter than @tonconnect/sdk).
+  // wallets it may have deliberately excluded.
   it('does not substitute the built-in list for an unreachable custom registry', async () => {
     offline();
     await expect(makeBridge().getWallets()).rejects.toMatchObject({
@@ -344,7 +343,7 @@ describe('wallets registry fallback (ton-connect/sdk#575)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// session.md:57 — after the session ends both sides MUST stop processing it.
+// After the session ends both sides MUST stop processing it.
 // A connect aborted on our side must also end the wallet's side.
 // ---------------------------------------------------------------------------
 describe('aborted connect notifies the wallet', () => {
@@ -368,7 +367,7 @@ describe('aborted connect notifies the wallet', () => {
 });
 
 // ---------------------------------------------------------------------------
-// rpc.md:90 — valid_until is "Unix seconds".
+// valid_until is "Unix seconds".
 // ---------------------------------------------------------------------------
 describe('validUntil units (rpc.md:90)', () => {
   it('rejects a millisecond timestamp', () => {
@@ -397,7 +396,7 @@ describe('TBridge.once (documented in README)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ton-connect/sdk#69 — on mobile, wallets without a mobile app must not be offered
+// On mobile, wallets without a mobile app must not be offered
 // ---------------------------------------------------------------------------
 const w = (app_name: string, platforms: string[]) =>
   ({
@@ -435,7 +434,7 @@ describe('wallet list per platform (ton-connect/sdk#69)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ton-connect/sdk#327 — wallet re-connected on another device stops answering this one.
+// Wallet re-connected on another device stops answering this one.
 // Undetectable on our side; the timeout must say what likely happened.
 // ---------------------------------------------------------------------------
 async function restoredWithTimeout() {

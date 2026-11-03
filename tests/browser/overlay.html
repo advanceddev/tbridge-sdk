@@ -1,80 +1,144 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>tbridge overlay repro</title>
-<!--
-  Browser checks: ton-connect/sdk#185 (host <dialog>), #568 (body pointer-events:none), #577 (safe areas).
-  pnpm build && python -m http.server 8765   (from repo root), then open
-  http://127.0.0.1:8765/tests/browser/overlay.html?case=plain|dialog|radix|cleanup|escape|safe
-  Expect: hitIsOurItem true (plain, dialog, radix); topLeft 0 and hostClickable true (cleanup, escape);
-  safe (window 390x844): contentClearOfBottomInset and headerClearOfTopInset true (ton-connect/sdk#577).
-  Headless: chrome --headless=new --virtual-time-budget=5000 --dump-dom <url>
--->
-<style>body{font:14px system-ui;margin:24px} dialog{padding:24px}</style></head>
-<body>
-<h3 id="case">case: (none)</h3>
-<p id="out"></p>
-<dialog id="hostdlg"><p>Host native &lt;dialog&gt; (showModal)</p></dialog>
-<script type="module">
-import { openWalletModal } from '../../dist/tbridge.js';
-const one = { app_name: 'w', name: 'Wallet', image: '', about_url: '', bridge: [{ type: 'sse', url: 'https://b.test' }], platforms: ['ios'], features: [] };
-const wallets0 = [{ app_name: 'w', name: 'Wallet', image: '', about_url: '',
-  bridge: [{ type: 'sse', url: 'https://b.test' }], platforms: ['ios'], features: [] }];
-const wallets = new URLSearchParams(location.search).get('case') === 'safe' ? Array.from({ length: 24 }, (_, i) => ({ ...one, app_name: 'w' + i, name: 'Wallet ' + i })) : wallets0;
-window.__selected = 0;
-const open = () => openWalletModal({ wallets, onSelect: () => { window.__selected++; } });
-window.probe = () => {
-  const item = document.querySelector('.tbridge-item');
-  if (!item) return { item: false };
-  const r = item.getBoundingClientRect();
-  const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
-  const hit = document.elementFromPoint(x, y);
-  return { x, y, hitIsOurItem: !!hit?.closest?.('.tbridge-item'),
-           hit: hit ? (hit.id || String(hit.className) || hit.tagName) : null,
-           selected: window.__selected };
-};
-const c = new URLSearchParams(location.search).get('case');
-document.getElementById('case').textContent = 'case: ' + c;
-if (c === 'plain')  { open(); }                                                  // control
-if (c === 'dialog') { document.getElementById('hostdlg').showModal(); open(); }   // #185
-if (c === 'radix')  { document.body.style.pointerEvents = 'none'; open(); }       // #568
-if (c === 'geom') {
-  open();
-  document.getAnimations().forEach((a) => a.finish());
-  const R = (sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom)]; };
-  const probe100 = document.createElement('div'); probe100.style.cssText = 'position:fixed;top:0;height:100vh;width:1px';
-  document.body.append(probe100);
-  document.getElementById('out').textContent = JSON.stringify({ innerHeight, clientH: document.documentElement.clientHeight,
-    vh100: Math.round(probe100.getBoundingClientRect().height), top: R('dialog.tbridge-top'), overlay: R('.tbridge-overlay'), modal: R('.tbridge-modal') });
-} else
-if (c === 'safe') {
-  // what telegram-web-app.js sets inside a fullscreen Mini App (iPhone with notch + home bar)
-  const r0 = document.documentElement.style;
-  r0.setProperty('--tg-safe-area-inset-top', '47px');
-  r0.setProperty('--tg-content-safe-area-inset-top', '100px'); // fullscreen Mini App: Telegram header over content
-  r0.setProperty('--tg-safe-area-inset-bottom', '34px');
-  open();
-  document.getAnimations().forEach((a) => a.finish()); // measure the settled layout
-  const scroller = [...document.querySelectorAll('.tbridge-modal *')].find((e) => e.scrollHeight > e.clientHeight + 1 && getComputedStyle(e).overflowY !== 'visible');
-  if (scroller) scroller.scrollTop = scroller.scrollHeight; // user scrolled to the last wallet
-  const m = document.querySelector('.tbridge-modal').getBoundingClientRect();
-  const close = document.querySelector('.tbridge-close').getBoundingClientRect();
-  const items = [...document.querySelectorAll('.tbridge-item')].map((e) => e.getBoundingClientRect());
-  const vh = innerHeight;
-  document.getElementById('out').textContent = JSON.stringify({
-    vh, modalTop: Math.round(m.top), modalBottom: Math.round(m.bottom),
-    lastItemBottom: Math.round(Math.max(...items.map((r) => r.bottom))),
-    closeTop: Math.round(close.top),
-    contentClearOfBottomInset: Math.max(...items.map((r) => r.bottom)) <= vh - 34,
-    headerClearOfTopInset: m.top >= 47 + 100 });
-} else
-if (c === 'cleanup' || c === 'escape') {
-  const h = open();
-  if (c === 'cleanup') h.close();
-  else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  const hit = document.elementFromPoint(30, 30);
-  document.getElementById('out').textContent = JSON.stringify({
-    topLeft: document.querySelectorAll('dialog.tbridge-top').length,
-    hostClickable: hit?.id === 'case' || hit?.tagName === 'BODY' || hit?.tagName === 'HTML',
-    hit: hit ? (hit.id || hit.tagName) : null });
-} else
-document.getElementById('out').textContent = JSON.stringify(window.probe());
-</script></body></html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>tbridge overlay repro</title>
+    <style>
+      body {
+        font: 14px system-ui;
+        margin: 24px;
+      }
+      dialog {
+        padding: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <h3 id="case">case: (none)</h3>
+    <p id="out"></p>
+    <dialog id="hostdlg"><p>Host native &lt;dialog&gt; (showModal)</p></dialog>
+    <script type="module">
+      import { openWalletModal } from '../../dist/tbridge.js';
+      const one = {
+        app_name: 'w',
+        name: 'Wallet',
+        image: '',
+        about_url: '',
+        bridge: [{ type: 'sse', url: 'https://b.test' }],
+        platforms: ['ios'],
+        features: [],
+      };
+      const wallets0 = [
+        {
+          app_name: 'w',
+          name: 'Wallet',
+          image: '',
+          about_url: '',
+          bridge: [{ type: 'sse', url: 'https://b.test' }],
+          platforms: ['ios'],
+          features: [],
+        },
+      ];
+      const wallets =
+        new URLSearchParams(location.search).get('case') === 'safe'
+          ? Array.from({ length: 24 }, (_, i) => ({
+              ...one,
+              app_name: 'w' + i,
+              name: 'Wallet ' + i,
+            }))
+          : wallets0;
+      window.__selected = 0;
+      const open = () =>
+        openWalletModal({
+          wallets,
+          onSelect: () => {
+            window.__selected++;
+          },
+        });
+      window.probe = () => {
+        const item = document.querySelector('.tbridge-item');
+        if (!item) return { item: false };
+        const r = item.getBoundingClientRect();
+        const x = Math.round(r.left + r.width / 2),
+          y = Math.round(r.top + r.height / 2);
+        const hit = document.elementFromPoint(x, y);
+        return {
+          x,
+          y,
+          hitIsOurItem: !!hit?.closest?.('.tbridge-item'),
+          hit: hit ? hit.id || String(hit.className) || hit.tagName : null,
+          selected: window.__selected,
+        };
+      };
+      const c = new URLSearchParams(location.search).get('case');
+      document.getElementById('case').textContent = 'case: ' + c;
+      if (c === 'plain') {
+        open();
+      } // control
+      if (c === 'dialog') {
+        document.getElementById('hostdlg').showModal();
+        open();
+      } // #185
+      if (c === 'radix') {
+        document.body.style.pointerEvents = 'none';
+        open();
+      } // #568
+      if (c === 'geom') {
+        open();
+        document.getAnimations().forEach((a) => a.finish());
+        const R = (sel) => {
+          const r = document.querySelector(sel).getBoundingClientRect();
+          return [Math.round(r.top), Math.round(r.bottom)];
+        };
+        const probe100 = document.createElement('div');
+        probe100.style.cssText = 'position:fixed;top:0;height:100vh;width:1px';
+        document.body.append(probe100);
+        document.getElementById('out').textContent = JSON.stringify({
+          innerHeight,
+          clientH: document.documentElement.clientHeight,
+          vh100: Math.round(probe100.getBoundingClientRect().height),
+          top: R('dialog.tbridge-top'),
+          overlay: R('.tbridge-overlay'),
+          modal: R('.tbridge-modal'),
+        });
+      } else if (c === 'safe') {
+        // what telegram-web-app.js sets inside a fullscreen Mini App (iPhone with notch + home bar)
+        const r0 = document.documentElement.style;
+        r0.setProperty('--tg-safe-area-inset-top', '47px');
+        r0.setProperty('--tg-content-safe-area-inset-top', '100px'); // fullscreen Mini App: Telegram header over content
+        r0.setProperty('--tg-safe-area-inset-bottom', '34px');
+        open();
+        document.getAnimations().forEach((a) => a.finish()); // measure the settled layout
+        const scroller = [...document.querySelectorAll('.tbridge-modal *')].find(
+          (e) => e.scrollHeight > e.clientHeight + 1 && getComputedStyle(e).overflowY !== 'visible',
+        );
+        if (scroller) scroller.scrollTop = scroller.scrollHeight; // user scrolled to the last wallet
+        const m = document.querySelector('.tbridge-modal').getBoundingClientRect();
+        const close = document.querySelector('.tbridge-close').getBoundingClientRect();
+        const items = [...document.querySelectorAll('.tbridge-item')].map((e) =>
+          e.getBoundingClientRect(),
+        );
+        const vh = innerHeight;
+        document.getElementById('out').textContent = JSON.stringify({
+          vh,
+          modalTop: Math.round(m.top),
+          modalBottom: Math.round(m.bottom),
+          lastItemBottom: Math.round(Math.max(...items.map((r) => r.bottom))),
+          closeTop: Math.round(close.top),
+          contentClearOfBottomInset: Math.max(...items.map((r) => r.bottom)) <= vh - 34,
+          headerClearOfTopInset: m.top >= 47 + 100,
+        });
+      } else if (c === 'cleanup' || c === 'escape') {
+        const h = open();
+        if (c === 'cleanup') h.close();
+        else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        const hit = document.elementFromPoint(30, 30);
+        document.getElementById('out').textContent = JSON.stringify({
+          topLeft: document.querySelectorAll('dialog.tbridge-top').length,
+          hostClickable: hit?.id === 'case' || hit?.tagName === 'BODY' || hit?.tagName === 'HTML',
+          hit: hit ? hit.id || hit.tagName : null,
+        });
+      } else document.getElementById('out').textContent = JSON.stringify(window.probe());
+    </script>
+  </body>
+</html>

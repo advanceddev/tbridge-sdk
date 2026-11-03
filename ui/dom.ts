@@ -25,7 +25,7 @@ export const isDesktop = (): boolean =>
 
 /**
  * Mount an overlay in the browser top layer via <dialog>.showModal(): it then sits
- * above host <dialog>s / popovers whatever their z-index (ton-connect/sdk#185), and
+ * above host <dialog>s / popovers whatever their z-index, and
  * the newest modal dialog is the interactive one. Falls back to a plain body append
  * where showModal is unavailable. Returns the unmount function.
  */

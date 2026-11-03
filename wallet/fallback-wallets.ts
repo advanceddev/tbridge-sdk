@@ -1,7 +1,6 @@
 /**
- * Built-in wallets list used only when the registry is unreachable and nothing is cached
- * (same approach as @tonconnect/sdk FALLBACK_WALLETS_LIST, which this is taken from —
- * @tonconnect/sdk 5.0.0, Apache-2.0). Entries still go through parseWalletsRegistry.
+ * Built-in wallets list used only when the registry is unreachable and nothing is cached.
+ * Entries still go through parseWalletsRegistry.
  */
 export const FALLBACK_WALLETS: unknown[] = [
   {

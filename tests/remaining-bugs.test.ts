@@ -1,5 +1,5 @@
 /**
- * Exploit regressions for bugs still open after the first fix rounds.
+ * Exploit regressions for bugs.
  */
 import nacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -72,8 +72,6 @@ describe('connect: SSE fails after the 2.5 s soft wait', () => {
 });
 
 describe('transaction network vs connected account', () => {
-  // @tonconnect/sdk refuses this (WalletWrongNetworkError); rpc.md:100 leaves it to
-  // the wallet, which a buggy / old wallet may not enforce.
   it('refuses sendTransaction for a network other than the connected account', async () => {
     mockFetch();
     const { send } = makeInjected(async () => connectEvent(1)); // mainnet account

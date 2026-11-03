@@ -1,6 +1,6 @@
 /**
  * JS Bridge transport — injected wallet binding (window[key][INJECTED_BRIDGE_PROP])
- * No encryption (same device). Spec: bridge.md § JS bridge
+ * No encryption (same device).
  */
 
 import { PROTOCOL_VERSION } from '../core/constants';
@@ -158,7 +158,7 @@ export async function restoreJsBridge(params: {
 
     if (typeof bridge.listen === 'function') {
       const off = bridge.listen((ev: WalletEvent) => {
-        if (!acceptEventId(ev.id)) return; // stale event (rpc.md:56)
+        if (!acceptEventId(ev.id)) return; // stale event
         if (ev.event === 'disconnect') {
           params.hooks?.onWalletDisconnect?.();
         }

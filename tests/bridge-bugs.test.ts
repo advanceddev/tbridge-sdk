@@ -41,8 +41,6 @@ import { STORAGE_KEYS } from '../core/constants';
 beforeEach(installBrowserFakes);
 afterEach(() => uninstallBrowserFakes());
 
-// ---------------------------------------------------------------------------
-
 describe('HTTP bridge: sender authentication', () => {
   it('ignores connect / response / disconnect from a key other than the connected wallet', async () => {
     const fetchMock = mockFetch();
@@ -225,7 +223,7 @@ describe('TBridge.cancelConnect', () => {
 });
 
 describe('TBridge.connect with failing storage', () => {
-  // By design (and same as @tonconnect/sdk): an unavailable storage aborts the connection.
+  // By design: an unavailable storage aborts the connection.
   it('drops the connection when persisting the session fails', async () => {
     mockFetch();
     makeInjected(async () => connectEvent(1));
@@ -248,7 +246,7 @@ describe("sessionPersistence: 'session'", () => {
     expect(loaded?.secretKeyHex).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  // Requirement (SDK author): a 'session' session survives F5 and is erased when the tab closes.
+  // Requirement: a 'session' session survives F5 and is erased when the tab closes.
   it('survives a reload in the same tab', async () => {
     mockFetch();
     setSessionPersistence('session');

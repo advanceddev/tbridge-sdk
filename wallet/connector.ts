@@ -1,6 +1,6 @@
 /**
  * TBridge — main SDK entry (framework-agnostic).
- * Phase 2: HTTP restore, signData, rate limiting, origin-bound sessions,
+ * HTTP restore, signData, rate limiting, origin-bound sessions,
  * bridge health events, parallel discovery.
  */
 
@@ -91,7 +91,6 @@ export class TBridge {
 
   private status: ConnectionStatus = { status: 'disconnected' };
   private account: Account | null = null;
-  /** Last successful connect item replies (ton_addr, ton_proof, …) */
   private lastConnectItems: import('../core/types').ConnectItemReply[] | null = null;
   private device: DeviceInfo | null = null;
   private currentWallet: WalletInfo | null = null;
@@ -102,9 +101,7 @@ export class TBridge {
   private theme: TBridgeTheme;
   private connecting = false;
   private restoring = false;
-  /** Bumped by cancelConnect / destroy so a superseded connect() cannot touch state. */
   private connectGeneration = 0;
-  /** Cleanup for in-flight HTTP connect (SSE channel) */
   private pendingConnectCleanup: (() => void) | null = null;
 
   constructor(options: TBridgeOptions & { crypto?: CryptoProvider }) {
@@ -139,8 +136,6 @@ export class TBridge {
   }
 
   /**
-   * Another tab ended the session (disconnect / wallet disconnect / expiry) and
-   * cleared it from localStorage: stop using it here too (ton-connect/sdk#569).
    * Storage events never fire in the tab that made the change.
    */
   private readonly onStorageEvent = (e: StorageEvent): void => {
@@ -228,7 +223,7 @@ export class TBridge {
   async detectInjected(): Promise<{
     appName: string;
     key: string;
-    /** True when the page runs inside the wallet's own browser (bridge.md:142) */
+    /** True when the page runs inside the wallet's own browser */
     isWalletBrowser: boolean;
   } | null> {
     const wallets = await this.discovery.getWallets();
@@ -392,7 +387,7 @@ export class TBridge {
       const err = TBridgeError.is(e) ? e : new TBridgeError('UNKNOWN', 'Connect failed', e);
       // A superseded attempt must not tear down / report over the current state.
       if (stale()) throw err;
-      // If the wallet already paired, end its side too (session.md:57) — otherwise
+      // If the wallet already paired, end its side too — otherwise
       // it keeps showing the dApp as connected. No-op for an unpaired HTTP channel.
       const live = this.session;
       this.session = null;
@@ -788,8 +783,7 @@ export class TBridge {
 
   /**
    * RPC request id — MUST be a decimal integer string, strictly increasing
-   * per session. Wallets reject non-numeric / non-monotonic ids (often with
-   * no UI). Spec: rpc.md AppRequest.id
+   * per session. Wallets reject non-numeric / non-monotonic ids (often with no UI).
    */
   private nextId(): string {
     // TonConnect starts at 0 and increments after issue
@@ -800,13 +794,13 @@ export class TBridge {
 
   /**
    * An HTTP wallet that never answers is usually closed, or its session was
-   * replaced by a connect from another device (ton-connect/sdk#327) — the bridge
+   * replaced by a connect from another device - the bridge
    * gives no signal for that. Say so instead of a bare TIMEOUT, so the host can
    * offer a reconnect with its own params (ton_proof etc.).
    */
   /**
    * The request's network must be the connected account's one. @tonconnect/sdk
-   * refuses a mismatch (WalletWrongNetworkError); rpc.md:100 leaves it to the
+   * refuses a mismatch (WalletWrongNetworkError);  leaves it to the
    * wallet, which an old / buggy wallet may not enforce — and funds would move
    * on a network the dApp did not mean.
    */

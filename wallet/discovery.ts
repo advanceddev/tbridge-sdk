@@ -145,7 +145,7 @@ export class WalletDiscovery {
         this.cache = stale;
         return stale;
       }
-      // First visit + registry down: built-in list (ton-connect/sdk#575). Only for
+      // First visit + registry down: built-in list. Only for
       // the default registry — a custom one is curated by the host, so never
       // substitute wallets it may have excluded (@tonconnect/sdk does, for any source).
       if (this.registryUrl !== DEFAULT_WALLETS_REGISTRY_URL) throw e;

@@ -1,5 +1,5 @@
 /**
- * ton-connect/sdk#70 — the platform "back" action must close our UI.
+ * The platform "back" action must close our UI.
  * Adaptive: Telegram BackButton inside a Mini App, browser history elsewhere.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
