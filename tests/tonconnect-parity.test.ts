@@ -6,7 +6,7 @@ import nacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionCrypto } from '../core/crypto';
 import { MemoryStorageAdapter } from '../core/storage';
-import { STORAGE_KEYS } from '../core/constants';
+import { DEFAULT_WALLETS_REGISTRY_URL, STORAGE_KEYS } from '../core/constants';
 import { connectHttpBridge } from '../bridge/http-bridge';
 import { saveLastWallet } from '../wallet/session';
 import { validateSendTransaction } from '../utils/validation';
@@ -18,6 +18,7 @@ import {
   REGISTRY,
   connectEvent,
   dispatchWindowEvent,
+  g,
   installBrowserFakes,
   lastEs,
   makeBridge,
@@ -316,14 +317,29 @@ describe('cross-tab disconnect (ton-connect/sdk#569)', () => {
 // ton-connect/sdk#575 — wallet list unavailable; reference SDK uses FALLBACK_WALLETS_LIST
 // ---------------------------------------------------------------------------
 describe('wallets registry fallback (ton-connect/sdk#575)', () => {
-  it('returns a built-in wallet list when the registry is unreachable and nothing is cached', async () => {
-    mockFetch(async () => {
+  const offline = () => {
+    g.fetch = vi.fn(async () => {
       throw new TypeError('Failed to fetch');
     });
-    const wallets = await makeBridge().getWallets();
+  };
+
+  it('returns a built-in wallet list when the default registry is unreachable and nothing is cached', async () => {
+    offline();
+    const wallets = await makeBridge(new MemoryStorageAdapter(), {
+      walletsRegistry: DEFAULT_WALLETS_REGISTRY_URL,
+    }).getWallets();
     const names = wallets.map((w) => w.app_name);
     expect(names).toContain('tonkeeper');
     expect(names).toContain('telegram-wallet');
+  });
+
+  // Product decision: a custom registry is curated by the host — never substitute
+  // wallets it may have deliberately excluded (stricter than @tonconnect/sdk).
+  it('does not substitute the built-in list for an unreachable custom registry', async () => {
+    offline();
+    await expect(makeBridge().getWallets()).rejects.toMatchObject({
+      code: 'BRIDGE_UNAVAILABLE',
+    });
   });
 });
 

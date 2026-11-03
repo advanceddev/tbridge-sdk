@@ -137,7 +137,7 @@ export class WalletDiscovery {
       this.cache = wallets;
       await this.writeCache(wallets);
       return wallets;
-    } catch {
+    } catch (e) {
       // Stale-if-error: prefer a previously valid list over hard failure when
       // the CDN is temporarily unreachable (enterprise UX).
       const stale = await this.readCache({ allowStale: true });
@@ -145,8 +145,10 @@ export class WalletDiscovery {
         this.cache = stale;
         return stale;
       }
-      // First visit + registry down: built-in list, like @tonconnect/sdk
-      // (FALLBACK_WALLETS_LIST, used for any source) — ton-connect/sdk#575.
+      // First visit + registry down: built-in list (ton-connect/sdk#575). Only for
+      // the default registry — a custom one is curated by the host, so never
+      // substitute wallets it may have excluded (@tonconnect/sdk does, for any source).
+      if (this.registryUrl !== DEFAULT_WALLETS_REGISTRY_URL) throw e;
       this.cache = parseWalletsRegistry(FALLBACK_WALLETS, 'fallback');
       return this.cache;
     }

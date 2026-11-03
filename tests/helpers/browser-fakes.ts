@@ -134,7 +134,11 @@ export function deferred<T>() {
 
 export function makeBridge(
   storage: StorageAdapter = new MemoryStorageAdapter(),
-  opts: { sessionPersistence?: 'local' | 'session' } = {},
+  opts: {
+    sessionPersistence?: 'local' | 'session';
+    walletsRegistry?: string;
+    requestTimeoutMs?: number;
+  } = {},
 ) {
   return new TBridge({
     manifestUrl: 'https://app.test/manifest.json',
