@@ -140,11 +140,54 @@ function backoffMs(attempt: number): number {
 /**
  * Detect if running inside Telegram WebApp (Mini App)
  */
+/** Wallet hosted in Telegram (Mini App / bot): t.me link or tg: scheme. */
+export function isTelegramLink(href: string): boolean {
+  try {
+    const u = new URL(href);
+    return u.protocol === 'tg:' || u.hostname === 't.me' || u.hostname.endsWith('.t.me');
+  } catch {
+    return false;
+  }
+}
+
+/** Telegram allows only [A-Za-z0-9_-] in startapp: percent-encode !'()*~ too. */
+function encodeParam(value: string): string {
+  return encodeURIComponent(value).replace(
+    /[!'()*~]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
 /**
- * Build wallet connect universal / deep link.
- * Wire format used by wallet apps: `r` is URL-encoded ConnectRequest JSON
- * (wallets decodeURIComponent + JSON.parse — not base64).
- * Launch path (TMA bridge vs browser) is handled by open-wallet-link.
+ * Telegram passes a Mini App nothing but `startapp` (<= 512 chars, [A-Za-z0-9_-]);
+ * other query params are dropped by some clients (Telegram Desktop on Windows: the
+ * connect never shows). Pack the whole query into it — same wire as @tonconnect/sdk
+ * (generateTGUniversalLink / encodeTelegramUrlParameters), which wallets decode.
+ */
+function telegramStartAppLink(base: string, query: string): string {
+  const startapp =
+    'tonconnect-' +
+    query
+      .replaceAll('.', '%2E')
+      .replaceAll('-', '%2D')
+      .replaceAll('_', '%5F')
+      .replaceAll('&', '-')
+      .replaceAll('=', '__')
+      .replaceAll('%', '--');
+  const url = new URL(base);
+  if (url.searchParams.has('attach')) {
+    // legacy attach-menu link → direct Mini App link
+    url.searchParams.delete('attach');
+    url.pathname += '/start';
+  }
+  url.searchParams.append('startapp', startapp);
+  return url.toString();
+}
+
+/**
+ * Build wallet connect universal / deep link (deeplinks.md).
+ * `r` is the URL-encoded ConnectRequest JSON. Telegram-hosted wallets get the
+ * startapp form; launch path (TMA bridge vs browser) is handled by open-wallet-link.
  */
 export function buildConnectLink(params: {
   universalUrl?: string;
@@ -154,13 +197,17 @@ export function buildConnectLink(params: {
   ret?: string;
 }): string {
   const base = params.universalUrl || params.deepLink || 'tc://';
-  const r = encodeURIComponent(JSON.stringify(params.connectRequest));
-  const sep = base.includes('?') ? '&' : '?';
-  let link = `${base}${sep}v=2&id=${params.clientId}&r=${r}`;
-  if (params.ret) {
-    link += `&ret=${encodeURIComponent(params.ret)}`;
-  }
-  return link;
+  const telegram = isTelegramLink(base);
+  const query: Array<[string, string]> = [
+    ['v', '2'],
+    ['id', params.clientId],
+    ['r', JSON.stringify(params.connectRequest)],
+  ];
+  // Telegram: the return target is Telegram itself; same as @tonconnect/sdk, no ret.
+  if (params.ret && !telegram) query.push(['ret', params.ret]);
+  const qs = query.map(([k, v]) => `${k}=${encodeParam(v)}`).join('&');
+  if (telegram) return telegramStartAppLink(base, qs);
+  return `${base}${base.includes('?') ? '&' : '?'}${qs}`;
 }
 
 interface LiveHttpChannel {

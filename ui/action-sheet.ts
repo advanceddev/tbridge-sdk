@@ -11,6 +11,7 @@ import { t, type TBridgeLocale } from './i18n';
 import type { TBridgeTheme } from './theme';
 import { openWalletLink, isTelegramWalletIdentity } from '../utils/open-wallet-link';
 import { bindBack } from './back-handler';
+import { buildConnectLink } from '../bridge/http-bridge';
 import { mountOnTop } from './dom';
 
 export interface ActionSheetHandle {
@@ -76,30 +77,13 @@ function buildOpenLink(wallet: WalletInfo, clientId: string, manifestUrl?: strin
     return `${base}${sep}v=2&id=${id}&ret=back`;
   }
 
-  const request = {
-    manifestUrl,
-    items: [{ name: 'ton_addr' as const }],
-  };
-  const r = encodeURIComponent(JSON.stringify(request));
-
-  if (base.startsWith('https://') || base.startsWith('http://')) {
-    try {
-      const u = new URL(base);
-      u.searchParams.set('v', '2');
-      u.searchParams.set('id', id);
-      // searchParams encodes once; pass raw JSON
-      u.searchParams.set('r', JSON.stringify(request));
-      if (!u.searchParams.has('ret')) {
-        u.searchParams.set('ret', 'back');
-      }
-      return u.toString();
-    } catch {
-      /* fall through */
-    }
-  }
-
-  const sep = base.includes('?') ? '&' : '?';
-  return `${base}${sep}v=2&id=${id}&r=${r}&ret=back`;
+  // Same builder as the connect link: Telegram-hosted wallets need the startapp form.
+  return buildConnectLink({
+    universalUrl: base,
+    clientId: id,
+    connectRequest: { manifestUrl, items: [{ name: 'ton_addr' }] },
+    ret: 'back',
+  });
 }
 
 export function showActionSheet(options: ActionSheetOptions): ActionSheetHandle {

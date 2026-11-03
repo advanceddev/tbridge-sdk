@@ -79,6 +79,14 @@ function isTelegramHosted(href: string): boolean {
 
 export function withReturnStrategy(href: string, strategy: ReturnStrategy): string {
   if (!strategy) return href;
+  // Telegram startapp links carry everything inside startapp; a plain `ret` next to
+  // it is not delivered and only changes the verified link format.
+  if (
+    isTelegramHosted(href) &&
+    safeUrl(href)?.searchParams.get('startapp')?.startsWith('tonconnect-')
+  ) {
+    return href;
+  }
   try {
     if (isHttpUrl(href)) {
       const u = new URL(href);
