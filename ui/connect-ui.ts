@@ -8,7 +8,7 @@ import type { ConnectionStatus, WalletInfo } from '../core/types';
 import { TBridgeError } from '../core/errors';
 import { isSafeImageUrl } from '../core/security';
 import { renderQrToDataUrl } from '../utils/qr';
-import { detectRuntimeEnv } from '../utils/runtime-env';
+import { detectRuntimeEnv, type RuntimeEnv } from '../utils/runtime-env';
 import {
   createLinkHandoff,
   openWalletLink,
@@ -38,6 +38,18 @@ export interface ConnectWithUiOptions {
   tonProofPayload?: string;
 }
 
+/**
+ * On a phone, offer only wallets that ship an app for this OS (ton-connect/sdk#69):
+ * an extension-only wallet there is a dead end. Desktop keeps everything —
+ * mobile wallets connect from desktop by scanning the QR.
+ */
+export function walletsForEnv(wallets: WalletInfo[], env: Pick<RuntimeEnv, 'os'>): WalletInfo[] {
+  const platform =
+    env.os === 'ios' || env.os === 'ipad' ? 'ios' : env.os === 'android' ? 'android' : null;
+  if (!platform) return wallets;
+  return wallets.filter((w) => w.platforms.includes(platform));
+}
+
 export async function connectWithUi(
   bridge: TBridge,
   options: ConnectWithUiOptions = {},
@@ -60,7 +72,7 @@ export async function connectWithUi(
     });
   }
 
-  let wallets = await bridge.getWallets();
+  let wallets = walletsForEnv(await bridge.getWallets(), env);
   if (options.filterWallets) {
     wallets = options.filterWallets(wallets);
   }

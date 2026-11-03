@@ -10,7 +10,7 @@ import { STORAGE_KEYS } from '../core/constants';
 import { connectHttpBridge } from '../bridge/http-bridge';
 import { saveLastWallet } from '../wallet/session';
 import { validateSendTransaction } from '../utils/validation';
-import { connectWithUi } from '../ui/connect-ui';
+import { connectWithUi, walletsForEnv } from '../ui/connect-ui';
 import {
   ADDRESS,
   DEVICE,
@@ -377,5 +377,43 @@ describe('TBridge.once (documented in README)', () => {
     bridge.once('statusChange', handler);
     await bridge.connect(); // connecting + connected
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ton-connect/sdk#69 — on mobile, wallets without a mobile app must not be offered
+// ---------------------------------------------------------------------------
+const w = (app_name: string, platforms: string[]) =>
+  ({
+    app_name,
+    name: app_name,
+    image: '',
+    about_url: '',
+    bridge: [],
+    platforms,
+    features: [],
+  }) as never;
+
+describe('wallet list per platform (ton-connect/sdk#69)', () => {
+  const list = [
+    w('both', ['ios', 'android']),
+    w('ext', ['chrome', 'firefox']),
+    w('ios-only', ['ios']),
+    w('android-only', ['android']),
+  ];
+  const names = (os: string) =>
+    walletsForEnv(list, { os } as never).map((x: { app_name: string }) => x.app_name);
+
+  it('iPhone: only wallets with an iOS app', () => {
+    expect(names('ios')).toEqual(['both', 'ios-only']);
+  });
+  it('iPad counts as iOS', () => {
+    expect(names('ipad')).toEqual(['both', 'ios-only']);
+  });
+  it('Android: only wallets with an Android app', () => {
+    expect(names('android')).toEqual(['both', 'android-only']);
+  });
+  it('desktop: everything (mobile wallets connect via QR)', () => {
+    expect(names('macos')).toEqual(['both', 'ext', 'ios-only', 'android-only']);
   });
 });
