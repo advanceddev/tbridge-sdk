@@ -132,12 +132,21 @@ export function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-export function makeBridge(storage: StorageAdapter = new MemoryStorageAdapter()) {
+export function makeBridge(
+  storage: StorageAdapter = new MemoryStorageAdapter(),
+  opts: { sessionPersistence?: 'local' | 'session' } = {},
+) {
   return new TBridge({
     manifestUrl: 'https://app.test/manifest.json',
     walletsRegistry: 'https://reg.test/wallets.json',
     storage,
+    ...opts,
   });
+}
+
+/** Tab closed: the browser drops sessionStorage, durable storage stays. */
+export function simulateTabClose(): void {
+  g.sessionStorage = memSessionStorage();
 }
 
 export async function seedHttpSession(

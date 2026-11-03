@@ -82,6 +82,7 @@ export class TBridge {
   private readonly storage: StorageAdapter;
   private readonly cryptoProvider?: CryptoProvider;
   private readonly sessionMaxAgeMs: number;
+  private readonly sessionPersistence: 'local' | 'session';
   private readonly discovery: WalletDiscovery;
   private readonly emitter = new TypedEventEmitter<TBridgeEventMap>();
   private readonly rateLimiter = new RateLimiter(RPC_RATE_CAPACITY, RPC_RATE_REFILL_PER_SEC);
@@ -124,7 +125,8 @@ export class TBridge {
     this.storage = options.storage ?? new LocalStorageAdapter();
     this.cryptoProvider = options.crypto;
     this.sessionMaxAgeMs = options.sessionMaxAgeMs ?? SESSION_MAX_AGE_MS;
-    setSessionPersistence(options.sessionPersistence === 'session' ? 'session' : 'local');
+    this.sessionPersistence = options.sessionPersistence === 'session' ? 'session' : 'local';
+    setSessionPersistence(this.sessionPersistence);
     this.locale = normalizeLocale(options.locale);
     this.theme = normalizeTheme(options.theme);
     this.discovery = new WalletDiscovery(
@@ -140,6 +142,8 @@ export class TBridge {
    * Storage events never fire in the tab that made the change.
    */
   private readonly onStorageEvent = (e: StorageEvent): void => {
+    // 'session' mode: each tab owns its own session — other tabs must not end it.
+    if (this.sessionPersistence === 'session') return;
     if (!this.isConnected || e.newValue !== null) return;
     if (e.key !== null && e.key !== STORAGE_KEYS.SESSION && e.key !== STORAGE_KEYS.LAST_WALLET) {
       return;

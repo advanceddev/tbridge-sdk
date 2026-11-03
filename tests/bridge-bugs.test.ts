@@ -18,6 +18,7 @@ import {
 import { openLink } from '../utils/open-wallet-link';
 import {
   ADDRESS,
+  DEVICE,
   FakeEventSource,
   connectEvent,
   deferred,
@@ -30,9 +31,12 @@ import {
   restoreHttp,
   sealFrom,
   seedHttpSession,
+  simulateTabClose,
+  dispatchWindowEvent,
   tick,
   uninstallBrowserFakes,
 } from './helpers/browser-fakes';
+import { STORAGE_KEYS } from '../core/constants';
 
 beforeEach(installBrowserFakes);
 afterEach(() => uninstallBrowserFakes());
@@ -242,6 +246,89 @@ describe("sessionPersistence: 'session'", () => {
     await seedHttpSession(storage);
     const loaded = await loadPersistedSession(storage);
     expect(loaded?.secretKeyHex).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  // Requirement (SDK author): a 'session' session survives F5 and is erased when the tab closes.
+  it('survives a reload in the same tab', async () => {
+    mockFetch();
+    setSessionPersistence('session');
+    const storage = new MemoryStorageAdapter();
+    await seedHttpSession(storage);
+    await restoreHttp(makeBridge(storage, { sessionPersistence: 'session' }));
+  });
+
+  it('leaves nothing of the session in durable storage once the tab is closed', async () => {
+    setSessionPersistence('session');
+    const storage = new MemoryStorageAdapter();
+    await seedHttpSession(storage);
+    simulateTabClose();
+    expect(await loadPersistedSession(storage)).toBeNull();
+    // account address / wallet key must not outlive the tab in localStorage
+    expect(await storage.getItem(STORAGE_KEYS.SESSION)).toBeNull();
+  });
+
+  it('aborts the connect when sessionStorage is not writable (private mode / locked WebView)', async () => {
+    mockFetch();
+    g.sessionStorage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('QuotaExceededError');
+      },
+      removeItem: () => {},
+    };
+    const bridge = makeBridge(new MemoryStorageAdapter(), { sessionPersistence: 'session' });
+    const p = bridge.connect({ appName: 'w', onConnectLink() {} });
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+    const es = lastEs();
+    es.fire('open');
+    await tick();
+    await tick();
+    es.fire('message', sealFrom(nacl.box.keyPair(), es.clientId, connectEvent(1)));
+    await expect(p).rejects.toMatchObject({ code: 'STORAGE_ERROR' });
+    expect(bridge.isConnected).toBe(false);
+  });
+
+  it('upgrade: a live tab with the old layout (blob in localStorage) still restores', async () => {
+    mockFetch();
+    const storage = new MemoryStorageAdapter();
+    setSessionPersistence('local');
+    await seedHttpSession(storage); // old: full blob in durable storage
+    await restoreHttp(makeBridge(storage, { sessionPersistence: 'session' }));
+    // moved into the tab, nothing left behind
+    expect(await storage.getItem(STORAGE_KEYS.SESSION)).toBeNull();
+  });
+
+  it('upgrade: drops a secret-less blob left in localStorage by a closed tab', async () => {
+    setSessionPersistence('session');
+    const storage = new MemoryStorageAdapter();
+    // what versions <= 0.4.0 wrote to the adapter in 'session' mode (secret stripped)
+    await storage.setItem(
+      STORAGE_KEYS.SESSION,
+      JSON.stringify({
+        version: 2,
+        walletAppName: 'w',
+        clientId: 'a'.repeat(64),
+        walletClientId: 'b'.repeat(64),
+        bridgeUrl: 'https://bridge.test',
+        account: { address: ADDRESS, chain: '-239' },
+        device: DEVICE,
+        createdAt: Date.now(),
+        origin: 'https://app.test',
+      }),
+    );
+    expect(await loadPersistedSession(storage)).toBeNull();
+    expect(await storage.getItem(STORAGE_KEYS.SESSION)).toBeNull();
+  });
+
+  it("is not torn down by another tab's disconnect (each tab owns its session)", async () => {
+    mockFetch();
+    setSessionPersistence('session');
+    const storage = new MemoryStorageAdapter();
+    await seedHttpSession(storage);
+    const bridge = makeBridge(storage, { sessionPersistence: 'session' });
+    await restoreHttp(bridge);
+    dispatchWindowEvent('storage', { key: STORAGE_KEYS.LAST_WALLET, newValue: null });
+    expect(bridge.isConnected).toBe(true);
   });
 });
 
