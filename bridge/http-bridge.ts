@@ -27,7 +27,12 @@ import type {
   ConnectRequest,
   WalletResponse,
 } from '../core/types';
-import { isConnectEvent, isWalletResponse, mapWalletError } from '../utils/validation';
+import {
+  createEventIdGate,
+  isConnectEvent,
+  isWalletResponse,
+  mapWalletError,
+} from '../utils/validation';
 
 export interface HttpBridgeSession {
   readonly kind: 'http';
@@ -175,6 +180,8 @@ function openHttpChannel(params: {
   appName: string;
   sessionCrypto: SessionCrypto;
   walletClientId: string | null;
+  /** Last processed wallet event id (persisted) — baseline for rpc.md:56 ordering */
+  lastWalletEventId?: number | null;
   timeoutMs: number;
   hooks?: HttpSessionHooks;
 }): LiveHttpChannel {
@@ -184,6 +191,7 @@ function openHttpChannel(params: {
   const abort = new AbortController();
   const pending = new Map<string, PendingRequest>();
   let walletClientId = params.walletClientId;
+  const acceptEventId = createEventIdGate(params.lastWalletEventId ?? null);
   let lastEventId: string | undefined;
   let eventSource: EventSource | null = null;
   let destroyed = false;
@@ -233,6 +241,14 @@ function openHttpChannel(params: {
       msg = safeJsonParse(plaintext, 'bridge message');
     } catch {
       return;
+    }
+    if (
+      msg &&
+      typeof msg === 'object' &&
+      'event' in msg &&
+      !acceptEventId((msg as { id?: unknown }).id)
+    ) {
+      return; // stale / replayed wallet event (rpc.md:56)
     }
 
     if (isConnectEvent(msg)) {
@@ -562,6 +578,7 @@ export async function restoreHttpBridge(params: {
   bridgeUrl: string;
   appName: string;
   walletClientId: string;
+  lastWalletEventId?: number | null;
   sessionCrypto: SessionCrypto;
   timeoutMs: number;
   hooks?: HttpSessionHooks;
@@ -571,6 +588,7 @@ export async function restoreHttpBridge(params: {
     appName: params.appName,
     sessionCrypto: params.sessionCrypto,
     walletClientId: params.walletClientId,
+    lastWalletEventId: params.lastWalletEventId,
     timeoutMs: params.timeoutMs,
     hooks: params.hooks,
   });

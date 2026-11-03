@@ -4,7 +4,6 @@
  */
 
 import { TBridgeError } from '../core/errors';
-import { isHex64 } from '../core/encoding';
 import type {
   ConnectEvent,
   ConnectItemReply,
@@ -16,20 +15,6 @@ import type {
 export function assertNonEmptyString(value: unknown, field: string): asserts value is string {
   if (typeof value !== 'string' || value.length === 0) {
     throw new TBridgeError('INVALID_PAYLOAD', `${field} must be a non-empty string`);
-  }
-}
-
-export function assertClientId(value: unknown): asserts value is string {
-  if (!isHex64(String(value ?? ''))) {
-    throw new TBridgeError('INVALID_PAYLOAD', 'client_id must be 64-char lowercase hex');
-  }
-}
-
-export function parseJsonSafe<T = unknown>(raw: string, label: string): T {
-  try {
-    return JSON.parse(raw) as T;
-  } catch (e) {
-    throw new TBridgeError('INVALID_PAYLOAD', `${label} is not valid JSON`, e);
   }
 }
 
@@ -107,6 +92,11 @@ export function validateSendTransaction(tx: SendTransactionRequest): void {
   if (typeof tx.validUntil !== 'number' || tx.validUntil <= 0) {
     throw new TBridgeError('INVALID_PAYLOAD', 'validUntil must be a positive unix timestamp');
   }
+  // rpc.md:90 — Unix *seconds*. A Date.now()-style value (ms) would read as a
+  // deadline tens of millennia away, i.e. a request that never expires.
+  if (tx.validUntil >= 1e12) {
+    throw new TBridgeError('INVALID_PAYLOAD', 'validUntil must be in seconds, not milliseconds');
+  }
   if (tx.validUntil < Math.floor(Date.now() / 1000)) {
     throw new TBridgeError('INVALID_PAYLOAD', 'validUntil is in the past');
   }
@@ -125,6 +115,66 @@ export function validateSendTransaction(tx: SendTransactionRequest): void {
   }
 }
 
+/**
+ * Spec rpc.md:56: wallet event ids MUST strictly increase; the dApp MUST reject
+ * events that violate this. Returns a predicate: false = stale event, drop it.
+ * Events without a numeric id are let through (same as @tonconnect/sdk).
+ */
+export function createEventIdGate(baseline: number | null = null): (id: unknown) => boolean {
+  let last = baseline;
+  return (id) => {
+    if (typeof id !== 'number') return true;
+    if (last !== null && id <= last) return false;
+    last = id;
+    return true;
+  };
+}
+
+function findFeature(features: readonly unknown[], name: string): Record<string, unknown> | null {
+  const f = features.find(
+    (x) => !!x && typeof x === 'object' && (x as { name?: unknown }).name === name,
+  );
+  return (f as Record<string, unknown> | undefined) ?? null;
+}
+
+/**
+ * Spec connect.md:103: "SDKs MUST treat absent features as unsupported and refuse
+ * to send the corresponding request." Mirrors @tonconnect/sdk checkSendTransactionSupport,
+ * including the legacy string feature 'SendTransaction'.
+ */
+export function assertSendTransactionSupported(
+  features: readonly unknown[],
+  tx: SendTransactionRequest,
+): void {
+  const feature = findFeature(features, 'SendTransaction');
+  if (!feature && !features.includes('SendTransaction')) {
+    throw new TBridgeError('WALLET_NOT_SUPPORTED', "Wallet doesn't support SendTransaction");
+  }
+  const needsExtra = tx.messages.some(
+    (m) => m.extraCurrency && Object.keys(m.extraCurrency).length > 0,
+  );
+  if (needsExtra && feature?.extraCurrencySupported !== true) {
+    throw new TBridgeError('WALLET_NOT_SUPPORTED', "Wallet doesn't support extra currencies");
+  }
+  if (typeof feature?.maxMessages === 'number' && tx.messages.length > feature.maxMessages) {
+    throw new TBridgeError(
+      'WALLET_NOT_SUPPORTED',
+      `Wallet supports at most ${feature.maxMessages} messages, got ${tx.messages.length}`,
+    );
+  }
+}
+
+/** Spec connect.md:103 — SignData must be listed with the requested payload type. */
+export function assertSignDataSupported(features: readonly unknown[], type: string): void {
+  const types = findFeature(features, 'SignData')?.types;
+  if (!Array.isArray(types) || !types.includes(type)) {
+    throw new TBridgeError(
+      'WALLET_NOT_SUPPORTED',
+      `Wallet doesn't support signData type "${type}"`,
+    );
+  }
+}
+
 /** Map wallet RPC error codes to TBridgeError */
 export function mapWalletError(code: number, message: string): TBridgeError {
   switch (code) {
@@ -134,6 +184,9 @@ export function mapWalletError(code: number, message: string): TBridgeError {
       return new TBridgeError('NOT_CONNECTED', message || 'Unknown app / session');
     case 1:
       return new TBridgeError('INVALID_PAYLOAD', message || 'Bad request');
+    case 2: // MANIFEST_NOT_FOUND
+    case 3: // MANIFEST_CONTENT_ERROR
+      return new TBridgeError('INVALID_MANIFEST', message || 'App manifest not found or invalid');
     case 400:
       return new TBridgeError('WALLET_NOT_SUPPORTED', message || 'Method not supported');
     default:

@@ -50,8 +50,10 @@ export async function connectWithUi(
   const theme = options.theme ?? bridge.getTheme();
   const env = detectRuntimeEnv();
 
+  // Auto-connect only inside the wallet's own browser. A desktop extension is just
+  // one option: the user may want another extension or a mobile wallet (picker).
   const injected = await bridge.detectInjected();
-  if (injected) {
+  if (injected?.isWalletBrowser) {
     return bridge.connect({
       appName: injected.appName,
       tonProofPayload: options.tonProofPayload,

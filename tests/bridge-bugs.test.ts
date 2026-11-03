@@ -4,233 +4,38 @@
  */
 import nacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { bytesToBase64, bytesToHex, hexToBytes } from '../core/encoding';
+import { bytesToHex } from '../core/encoding';
 import { SessionCrypto } from '../core/crypto';
-import { MemoryStorageAdapter, type StorageAdapter } from '../core/storage';
+import { MemoryStorageAdapter } from '../core/storage';
 import { TypedEventEmitter } from '../core/event-emitter';
 import { connectHttpBridge, restoreHttpBridge } from '../bridge/http-bridge';
-import { TBridge } from '../wallet/connector';
 import {
   loadLastRpcId,
   loadPersistedSession,
   saveLastRpcId,
-  savePersistedSession,
   setSessionPersistence,
 } from '../wallet/session';
 import { openLink } from '../utils/open-wallet-link';
+import {
+  ADDRESS,
+  FakeEventSource,
+  connectEvent,
+  deferred,
+  g,
+  installBrowserFakes,
+  lastEs,
+  makeBridge,
+  makeInjected,
+  mockFetch,
+  restoreHttp,
+  sealFrom,
+  seedHttpSession,
+  tick,
+  uninstallBrowserFakes,
+} from './helpers/browser-fakes';
 
-// ---------------------------------------------------------------------------
-// Minimal browser fakes
-// ---------------------------------------------------------------------------
-
-type Listener = (ev: unknown) => void;
-
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  private readonly ls = new Map<string, Set<Listener>>();
-  closed = false;
-  constructor(readonly url: string) {
-    FakeEventSource.instances.push(this);
-  }
-  addEventListener(type: string, fn: Listener): void {
-    if (!this.ls.has(type)) this.ls.set(type, new Set());
-    this.ls.get(type)!.add(fn);
-  }
-  removeEventListener(type: string, fn: Listener): void {
-    this.ls.get(type)?.delete(fn);
-  }
-  close(): void {
-    this.closed = true;
-  }
-  fire(type: string, ev: unknown = {}): void {
-    for (const fn of Array.from(this.ls.get(type) ?? [])) fn(ev);
-  }
-  get clientId(): string {
-    return new URL(this.url).searchParams.get('client_id')!;
-  }
-}
-
-/** DOM stub: every property / call yields another stub (enough for the action sheet). */
-function fakeEl(): Record<string, unknown> {
-  const props: Record<string, unknown> = { style: {}, dataset: {} };
-  return new Proxy(function () {} as unknown as Record<string, unknown>, {
-    get(_t, k) {
-      if (k in props) return props[k as string];
-      if (k === 'then' || typeof k === 'symbol') return undefined;
-      return fakeEl();
-    },
-    set(_t, k, v) {
-      props[k as string] = v;
-      return true;
-    },
-    apply: () => fakeEl(),
-  });
-}
-
-const g = globalThis as Record<string, unknown>;
-const lastEs = () => FakeEventSource.instances.at(-1)!;
-const tick = () => new Promise((r) => setTimeout(r, 0));
-
-const DEVICE = {
-  platform: 'iphone',
-  appName: 'w',
-  appVersion: '1',
-  maxProtocolVersion: 2,
-  features: [],
-};
-const ADDRESS = `0:${'a'.repeat(64)}`;
-const connectEvent = (id = 1) => ({
-  event: 'connect',
-  id,
-  payload: {
-    items: [
-      { name: 'ton_addr', address: ADDRESS, network: '-239', walletStateInit: '', publicKey: '' },
-    ],
-    device: DEVICE,
-  },
-});
-
-const REGISTRY = [
-  {
-    app_name: 'w',
-    name: 'W',
-    image: '',
-    about_url: '',
-    universal_url: 'https://w.test/tc',
-    bridge: [
-      { type: 'sse', url: 'https://bridge.test' },
-      { type: 'js', key: 'w' },
-    ],
-    platforms: ['ios'],
-    features: [],
-  },
-];
-
-function mockFetch(registry: () => Promise<void> = async () => {}) {
-  const fn = vi.fn(async (url: string, _init?: RequestInit) => {
-    if (url.startsWith('https://reg.test')) {
-      await registry();
-      return { ok: true, status: 200, text: async () => JSON.stringify(REGISTRY) };
-    }
-    return { ok: true, status: 200 };
-  });
-  g.fetch = fn;
-  return fn;
-}
-
-function sealFrom(kp: nacl.BoxKeyPair, toHex: string, obj: unknown) {
-  const nonce = nacl.randomBytes(24);
-  const ct = nacl.box(
-    new TextEncoder().encode(JSON.stringify(obj)),
-    nonce,
-    hexToBytes(toHex),
-    kp.secretKey,
-  );
-  const out = new Uint8Array(24 + ct.length);
-  out.set(nonce);
-  out.set(ct, 24);
-  return { data: JSON.stringify({ from: bytesToHex(kp.publicKey), message: bytesToBase64(out) }) };
-}
-
-function deferred<T>() {
-  let resolve!: (v: T) => void;
-  let reject!: (e: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-function makeBridge(storage: StorageAdapter = new MemoryStorageAdapter()) {
-  return new TBridge({
-    manifestUrl: 'https://app.test/manifest.json',
-    walletsRegistry: 'https://reg.test/wallets.json',
-    storage,
-  });
-}
-
-async function seedHttpSession(storage: StorageAdapter) {
-  const dapp = nacl.box.keyPair();
-  const wallet = nacl.box.keyPair();
-  await savePersistedSession(storage, {
-    version: 2,
-    walletAppName: 'w',
-    clientId: bytesToHex(dapp.publicKey),
-    walletClientId: bytesToHex(wallet.publicKey),
-    bridgeUrl: 'https://bridge.test',
-    account: { address: ADDRESS, chain: '-239' },
-    device: DEVICE as never,
-    createdAt: Date.now(),
-    origin: 'https://app.test',
-    secretKeyHex: bytesToHex(dapp.secretKey),
-  });
-  return { dappHex: bytesToHex(dapp.publicKey), wallet };
-}
-
-async function restoreHttp(bridge: TBridge) {
-  const p = bridge.restoreConnection();
-  await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
-  lastEs().fire('open');
-  await p;
-  expect(bridge.isConnected).toBe(true);
-}
-
-function makeInjected(connect: () => Promise<unknown>) {
-  const send = vi.fn(async (req: { id: string; method?: string }) => ({ id: req.id, result: {} }));
-  g.w = {
-    tonconnect: {
-      deviceInfo: DEVICE,
-      protocolVersion: 2,
-      connect,
-      restoreConnection: async () => ({
-        event: 'connect_error',
-        id: 0,
-        payload: { code: 0, message: '' },
-      }),
-      send,
-      listen: () => () => {},
-    },
-  };
-  return { send };
-}
-
-const memSessionStorage = () => {
-  const m = new Map<string, string>();
-  return {
-    getItem: (k: string) => m.get(k) ?? null,
-    setItem: (k: string, v: string) => void m.set(k, v),
-    removeItem: (k: string) => void m.delete(k),
-  };
-};
-
-beforeEach(() => {
-  FakeEventSource.instances = [];
-  g.window = globalThis;
-  g.document = fakeEl();
-  g.location = { origin: 'https://app.test', search: '', hash: '' };
-  g.EventSource = FakeEventSource;
-  g.sessionStorage = memSessionStorage();
-  g.matchMedia = () => ({ matches: false });
-  setSessionPersistence('local');
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-  vi.restoreAllMocks();
-  for (const k of [
-    'window',
-    'document',
-    'location',
-    'EventSource',
-    'sessionStorage',
-    'matchMedia',
-    'w',
-    'open',
-  ]) {
-    delete g[k];
-  }
-});
+beforeEach(installBrowserFakes);
+afterEach(() => uninstallBrowserFakes());
 
 // ---------------------------------------------------------------------------
 

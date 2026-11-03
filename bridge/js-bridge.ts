@@ -13,7 +13,12 @@ import type {
   WalletResponse,
 } from '../core/types';
 import { getInjectedBridge } from '../utils/browser';
-import { isConnectEvent, isWalletResponse, mapWalletError } from '../utils/validation';
+import {
+  createEventIdGate,
+  isConnectEvent,
+  isWalletResponse,
+  mapWalletError,
+} from '../utils/validation';
 
 export interface JsBridgeSession {
   readonly kind: 'js';
@@ -65,9 +70,11 @@ export async function connectJsBridge(params: {
 
   const unsubscribers: Array<() => void> = [];
   let destroyed = false;
+  const acceptEventId = createEventIdGate(event.id);
 
   if (typeof bridge.listen === 'function') {
     const off = bridge.listen((ev: WalletEvent) => {
+      if (!acceptEventId(ev.id)) return; // stale event (rpc.md:56)
       if (ev.event === 'disconnect') {
         // Propagate wallet-initiated disconnect so connector can update status.
         params.hooks?.onWalletDisconnect?.();
@@ -147,9 +154,11 @@ export async function restoreJsBridge(params: {
 
     const unsubscribers: Array<() => void> = [];
     let destroyed = false;
+    const acceptEventId = createEventIdGate(event.id);
 
     if (typeof bridge.listen === 'function') {
       const off = bridge.listen((ev: WalletEvent) => {
+        if (!acceptEventId(ev.id)) return; // stale event (rpc.md:56)
         if (ev.event === 'disconnect') {
           params.hooks?.onWalletDisconnect?.();
         }

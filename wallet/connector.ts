@@ -11,6 +11,7 @@ import {
   RPC_RATE_CAPACITY,
   RPC_RATE_REFILL_PER_SEC,
   SESSION_MAX_AGE_MS,
+  STORAGE_KEYS,
   TBRIDGE_VERSION,
 } from '../core/constants';
 import type { CryptoProvider } from '../core/crypto';
@@ -38,9 +39,11 @@ import {
   type HttpBridgeSession,
 } from '../bridge/http-bridge';
 import { connectJsBridge, restoreJsBridge, type JsBridgeSession } from '../bridge/js-bridge';
-import { detectInjectedWallet, getInjectedBridge } from '../utils/browser';
+import { detectInjectedWallet, detectInjectedWallets, getInjectedBridge } from '../utils/browser';
 import {
   assertDeviceInfo,
+  assertSendTransactionSupported,
+  assertSignDataSupported,
   extractAccountFromConnect,
   mapWalletError,
   validateSendTransaction,
@@ -128,7 +131,23 @@ export class TBridge {
       options.walletsRegistry ?? DEFAULT_WALLETS_REGISTRY_URL,
       this.storage,
     );
+    window.addEventListener('storage', this.onStorageEvent);
   }
+
+  /**
+   * Another tab ended the session (disconnect / wallet disconnect / expiry) and
+   * cleared it from localStorage: stop using it here too (ton-connect/sdk#569).
+   * Storage events never fire in the tab that made the change.
+   */
+  private readonly onStorageEvent = (e: StorageEvent): void => {
+    if (!this.isConnected || e.newValue !== null) return;
+    if (e.key !== null && e.key !== STORAGE_KEYS.SESSION && e.key !== STORAGE_KEYS.LAST_WALLET) {
+      return;
+    }
+    this.teardownSession();
+    this.setStatus({ status: 'disconnected' });
+    this.emitter.emit('disconnect', { reason: 'local' });
+  };
 
   get connectionStatus(): ConnectionStatus {
     return this.status;
@@ -165,6 +184,13 @@ export class TBridge {
     return this.emitter.on(event, handler);
   }
 
+  once<K extends keyof TBridgeEventMap>(
+    event: K,
+    handler: (payload: TBridgeEventMap[K]) => void,
+  ): () => void {
+    return this.emitter.once(event, handler);
+  }
+
   async getWallets(forceRefresh = false): Promise<WalletInfo[]> {
     return this.discovery.getWallets(forceRefresh);
   }
@@ -193,11 +219,20 @@ export class TBridge {
     return loadLastWallet(this.storage);
   }
 
-  async detectInjected(): Promise<{ appName: string; key: string } | null> {
+  async detectInjected(): Promise<{
+    appName: string;
+    key: string;
+    /** True when the page runs inside the wallet's own browser (bridge.md:142) */
+    isWalletBrowser: boolean;
+  } | null> {
     const wallets = await this.discovery.getWallets();
     const detected = detectInjectedWallet(wallets);
     if (!detected) return null;
-    return { appName: detected.appName, key: detected.key };
+    return {
+      appName: detected.appName,
+      key: detected.key,
+      isWalletBrowser: detected.bridge.isWalletBrowser === true,
+    };
   }
 
   async connect(options: TBridgeConnectOptions = {}): Promise<ConnectionStatus> {
@@ -337,6 +372,7 @@ export class TBridge {
         secretKeyHex: keys.secretKeyHex,
         lastRpcId: this.requestId,
         connectItems: this.lastConnectItems ?? undefined,
+        lastWalletEventId: event.id,
       });
       await saveLastRpcId(this.storage, this.requestId);
       await saveLastWallet(this.storage, wallet.app_name);
@@ -346,6 +382,11 @@ export class TBridge {
       const err = TBridgeError.is(e) ? e : new TBridgeError('UNKNOWN', 'Connect failed', e);
       // A superseded attempt must not tear down / report over the current state.
       if (stale()) throw err;
+      // If the wallet already paired, end its side too (session.md:57) — otherwise
+      // it keeps showing the dApp as connected. No-op for an unpaired HTTP channel.
+      const live = this.session;
+      this.session = null;
+      if (live) void live.disconnect().catch(() => undefined);
       this.teardownSession();
       this.setStatus({ status: 'disconnected' });
       this.emitter.emit('error', err);
@@ -388,9 +429,15 @@ export class TBridge {
     try {
       const wallets = await this.discovery.getWallets();
 
-      // 1. Injected JS bridge — fastest path (Telegram Mini-App etc.)
-      const injected = detectInjectedWallet(wallets);
-      if (injected) {
+      // 1. Injected JS bridge — fastest path. Several extensions can be installed and
+      //    each may remember this dApp, so honour the wallet the user connected last;
+      //    if that was an HTTP wallet, skip extensions and restore its session below.
+      const injectedList = detectInjectedWallets(wallets);
+      const lastWallet = await loadLastWallet(this.storage).catch(() => null);
+      const candidates = lastWallet
+        ? injectedList.filter((i) => i.appName === lastWallet)
+        : injectedList;
+      for (const injected of candidates) {
         const restored = await restoreJsBridge({
           bridgeKey: injected.key,
           appName: injected.appName,
@@ -427,7 +474,9 @@ export class TBridge {
 
       const wallet = wallets.find((w) => w.app_name === persisted.walletAppName) ?? null;
       if (!wallet) {
-        await clearPersistedSession(this.storage);
+        // The list may be the built-in fallback (registry down) or older than the
+        // wallet: keep the session for the next attempt instead of wiping it.
+        this.log('persisted wallet not in current list — restore skipped');
         return this.status;
       }
 
@@ -442,6 +491,8 @@ export class TBridge {
         bridgeUrl: persisted.bridgeUrl,
         appName: persisted.walletAppName,
         walletClientId: persisted.walletClientId,
+        lastWalletEventId:
+          typeof persisted.lastWalletEventId === 'number' ? persisted.lastWalletEventId : null,
         sessionCrypto,
         timeoutMs: this.requestTimeoutMs,
         hooks,
@@ -525,6 +576,7 @@ export class TBridge {
     assertBrowser();
     this.assertCanRpc();
     validateSendTransaction(tx);
+    assertSendTransactionSupported(this.device?.features ?? [], tx);
 
     const payload = {
       valid_until: tx.validUntil,
@@ -604,6 +656,7 @@ export class TBridge {
     assertBrowser();
     this.assertCanRpc();
     validateSignData(payload);
+    assertSignDataSupported(this.device?.features ?? [], payload.type);
 
     const body = {
       network: opts?.network ?? NETWORK_ID[this.network],
@@ -680,6 +733,7 @@ export class TBridge {
     this.connectGeneration += 1;
     this.connecting = false;
     this.restoring = false;
+    window.removeEventListener('storage', this.onStorageEvent);
     this.teardownSession();
     this.emitter.removeAllListeners();
     this.setStatus({ status: 'disconnected' });
@@ -762,6 +816,8 @@ export class TBridge {
     if (event.event !== 'connect') {
       throw new TBridgeError('PROTOCOL_ERROR', 'Expected connect event');
     }
+    // Owned from here on: a throw below lets connect()'s catch disconnect the wallet.
+    this.session = session;
     assertDeviceInfo(event.payload.device);
     const accountData = extractAccountFromConnect(event.payload.items);
 
@@ -770,11 +826,6 @@ export class TBridge {
     // mainnet/testnet mix-ups are unacceptable for enterprise fintech.
     const expectedNetwork = NETWORK_ID[this.network];
     if (accountData.network !== expectedNetwork) {
-      try {
-        session.destroy();
-      } catch {
-        /* ignore */
-      }
       throw new TBridgeError(
         'NETWORK_MISMATCH',
         `Wallet returned network ${accountData.network}, expected ${expectedNetwork}`,

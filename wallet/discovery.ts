@@ -10,6 +10,7 @@ import type { StorageAdapter } from '../core/storage';
 import type { WalletInfo } from '../core/types';
 import { assertBrowser } from '../utils/browser';
 import { fetchWalletsRegistry, parseWalletsRegistry } from './registry';
+import { FALLBACK_WALLETS } from './fallback-wallets';
 import { collectWalletImageUrls, prefetchImages } from '../utils/prefetch-images';
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -136,7 +137,7 @@ export class WalletDiscovery {
       this.cache = wallets;
       await this.writeCache(wallets);
       return wallets;
-    } catch (e) {
+    } catch {
       // Stale-if-error: prefer a previously valid list over hard failure when
       // the CDN is temporarily unreachable (enterprise UX).
       const stale = await this.readCache({ allowStale: true });
@@ -144,7 +145,10 @@ export class WalletDiscovery {
         this.cache = stale;
         return stale;
       }
-      throw e;
+      // First visit + registry down: built-in list, like @tonconnect/sdk
+      // (FALLBACK_WALLETS_LIST, used for any source) — ton-connect/sdk#575.
+      this.cache = parseWalletsRegistry(FALLBACK_WALLETS, 'fallback');
+      return this.cache;
     }
   }
 

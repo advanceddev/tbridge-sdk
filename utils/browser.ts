@@ -49,17 +49,22 @@ export function getInjectedBridge(key: string): InjectedWalletBridge | null {
 export function detectInjectedWallet(
   wallets: Array<{ app_name: string; bridge: Array<{ type: string; key?: string }> }>,
 ): { appName: string; key: string; bridge: InjectedWalletBridge } | null {
-  if (!isBrowser()) return null;
+  return detectInjectedWallets(wallets)[0] ?? null;
+}
 
+/** All injected wallets present on the page (several extensions may coexist). */
+export function detectInjectedWallets(
+  wallets: Array<{ app_name: string; bridge: Array<{ type: string; key?: string }> }>,
+): Array<{ appName: string; key: string; bridge: InjectedWalletBridge }> {
+  if (!isBrowser()) return [];
+  const found: Array<{ appName: string; key: string; bridge: InjectedWalletBridge }> = [];
   for (const w of wallets) {
     for (const b of w.bridge) {
       if (b.type === 'js' && b.key) {
         const injected = getInjectedBridge(b.key);
-        if (injected) {
-          return { appName: w.app_name, key: b.key, bridge: injected };
-        }
+        if (injected) found.push({ appName: w.app_name, key: b.key, bridge: injected });
       }
     }
   }
-  return null;
+  return found;
 }

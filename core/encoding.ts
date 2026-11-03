@@ -40,28 +40,13 @@ export function normalizeKeyHex(value: string): string {
 
 /** Standard base64 (not URL-safe) — used for bridge message bodies */
 export function bytesToBase64(bytes: Uint8Array): string {
-  if (typeof btoa === 'function') {
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]!);
-    }
-    return btoa(binary);
+  // btoa exists in every supported runtime (browsers, Node >= 16). The previous
+  // hand-written fallback never emitted '=' padding and produced invalid base64.
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]!);
   }
-  // Fallback for environments without btoa (should not happen in browser)
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let result = '';
-  let i = 0;
-  while (i < bytes.length) {
-    const a = bytes[i++]!;
-    const b = i < bytes.length ? bytes[i++]! : 0;
-    const c = i < bytes.length ? bytes[i++]! : 0;
-    const triplet = (a << 16) | (b << 8) | c;
-    result += chars[(triplet >> 18) & 63]!;
-    result += chars[(triplet >> 12) & 63]!;
-    result += i > bytes.length + 1 ? '=' : chars[(triplet >> 6) & 63]!;
-    result += i > bytes.length ? '=' : chars[triplet & 63]!;
-  }
-  return result;
+  return btoa(binary);
 }
 
 export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
