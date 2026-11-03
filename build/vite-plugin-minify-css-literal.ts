@@ -102,6 +102,9 @@ export function minifyCssBasic(input: string): string {
 function needsCssSpace(prev: string, next: string): boolean {
   // `) and` / `) or` / `) not` — must not become `)and`
   if (prev === ')' && /[a-zA-Z_]/.test(next)) return true;
+  // `var(--a) - 8px` — calc() `+` / `-` must stay whitespace-surrounded, or the
+  // whole declaration is invalid and silently dropped
+  if (prev === ')' && (next === '-' || next === '+')) return true;
   // `and (` / `or (` / `not (` — must not become `and(`
   if (next === '(' && /[a-zA-Z0-9_-]/.test(prev)) return true;
   // Token–token: values, selectors, combinators (`.a .b`, `0 10px`)

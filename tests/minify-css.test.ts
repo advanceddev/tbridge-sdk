@@ -30,6 +30,17 @@ describe('minifyCssBasic', () => {
     expect(minifyCssBasic(input)).toBe('@media (min-width:520px){.tbridge-modal{width:420px}}');
   });
 
+  // CSS Values: `+` / `-` inside calc() MUST be surrounded by whitespace, else the
+  // whole declaration is dropped (here: max-height → none, the modal overflows).
+  it('keeps the spaces around + and - after a closing parenthesis in calc()', () => {
+    expect(minifyCssBasic('.a { max-height: calc(100vh - var(--x) - 8px); }')).toBe(
+      '.a{max-height:calc(100vh - var(--x) - 8px)}',
+    );
+    expect(minifyCssBasic('.a { --y: calc(var(--a, 0px) + var(--b, 0px)); }')).toBe(
+      '.a{--y:calc(var(--a,0px) + var(--b,0px))}',
+    );
+  });
+
   it('preserves spaces around media-query logical operators (and/or/not)', () => {
     const input = `
       @media (hover: hover) and (pointer: fine) {

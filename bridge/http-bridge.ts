@@ -199,6 +199,8 @@ function openHttpChannel(params: {
   let channelDead = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
+  /** Some stream (initial or a retry) has opened at least once. */
+  let everOpened = false;
   const connectWaiters: Array<{
     resolve: (ev: ConnectEvent) => void;
     reject: (err: unknown) => void;
@@ -300,6 +302,7 @@ function openHttpChannel(params: {
 
       onOpen = () => {
         opened = true;
+        everOpened = true;
         reconnectAttempt = 0;
         setHealth('connected');
         resolve();
@@ -398,6 +401,12 @@ function openHttpChannel(params: {
 
   // Start SSE immediately (caller awaits openSse via connect/restore)
   const sseReady = openSse();
+  // Initial open failed (often after connect's 2.5 s soft wait, with the QR already
+  // shown): keep retrying in the background so the wallet's approval can still
+  // arrive. Callers that give up destroy the channel, which stops the retries.
+  sseReady.catch(() => {
+    if (!destroyed) scheduleReconnect();
+  });
 
   /** Encrypt + POST one request to the wallet. Resolves once the bridge accepted it. */
   const post = async (request: AppRequest, to: string): Promise<void> => {
@@ -437,7 +446,8 @@ function openHttpChannel(params: {
       return walletClientId ?? '';
     },
     async send(request: AppRequest): Promise<WalletResponse> {
-      await sseReady;
+      // A failed first open must not poison a channel that has reconnected since.
+      if (!everOpened) await sseReady;
       if (destroyed || !walletClientId) {
         throw new TBridgeError('NOT_CONNECTED', 'HTTP session not ready');
       }
@@ -547,10 +557,20 @@ export async function connectHttpBridge(params: {
 
   // Soft-wait for SSE: do not block the link forever if the bridge is slow.
   // waitConnectEvent still requires a live stream to receive the response.
+  let softWaitOver = false;
   await Promise.race([
-    channel.sseReady,
+    channel.sseReady.catch((e: unknown) => {
+      // Failed inside the soft wait: give up (stops retries). Later failures are
+      // retried in the background while we wait for the wallet.
+      if (softWaitOver) return;
+      channel.session.destroy();
+      throw e;
+    }),
     new Promise<void>((resolve) => {
-      window.setTimeout(resolve, SSE_CONNECT_SOFT_TIMEOUT_MS);
+      window.setTimeout(() => {
+        softWaitOver = true;
+        resolve();
+      }, SSE_CONNECT_SOFT_TIMEOUT_MS);
     }),
   ]);
 
@@ -593,6 +613,11 @@ export async function restoreHttpBridge(params: {
     hooks: params.hooks,
   });
 
-  await channel.sseReady;
+  try {
+    await channel.sseReady;
+  } catch (e) {
+    channel.session.destroy(); // restore gives up: stop background retries
+    throw e;
+  }
   return channel.session;
 }

@@ -365,21 +365,25 @@ export class TBridge {
 
       const keys = sessionCrypto.exportKeys();
       // By design: a storage failure aborts the connection (see catch below).
-      await savePersistedSession(this.storage, {
-        version: PROTOCOL_VERSION,
-        walletAppName: wallet.app_name,
-        clientId: keys.publicKeyHex,
-        walletClientId: session.kind === 'http' ? session.walletClientId : '',
-        bridgeUrl: sse.url,
-        account: this.account!,
-        device: this.device!,
-        createdAt: Date.now(),
-        origin: currentOrigin(),
-        secretKeyHex: keys.secretKeyHex,
-        lastRpcId: this.requestId,
-        connectItems: this.lastConnectItems ?? undefined,
-        lastWalletEventId: event.id,
-      });
+      await savePersistedSession(
+        this.storage,
+        {
+          version: PROTOCOL_VERSION,
+          walletAppName: wallet.app_name,
+          clientId: keys.publicKeyHex,
+          walletClientId: session.kind === 'http' ? session.walletClientId : '',
+          bridgeUrl: sse.url,
+          account: this.account!,
+          device: this.device!,
+          createdAt: Date.now(),
+          origin: currentOrigin(),
+          secretKeyHex: keys.secretKeyHex,
+          lastRpcId: this.requestId,
+          connectItems: this.lastConnectItems ?? undefined,
+          lastWalletEventId: event.id,
+        },
+        this.sessionPersistence,
+      );
       await saveLastRpcId(this.storage, this.requestId);
       await saveLastWallet(this.storage, wallet.app_name);
 
@@ -460,7 +464,7 @@ export class TBridge {
       }
 
       // 2. Persisted HTTP session
-      const persisted = await loadPersistedSession(this.storage);
+      const persisted = await loadPersistedSession(this.storage, this.sessionPersistence);
       if (!persisted?.secretKeyHex || !persisted.bridgeUrl || !persisted.walletClientId) {
         return this.status;
       }
@@ -586,7 +590,7 @@ export class TBridge {
 
     const payload = {
       valid_until: tx.validUntil,
-      network: tx.network ?? NETWORK_ID[this.network],
+      network: this.assertAccountNetwork(tx.network),
       from: tx.from ?? this.account?.address,
       messages: tx.messages.map((m) => ({
         address: m.address,
@@ -665,7 +669,7 @@ export class TBridge {
     assertSignDataSupported(this.device?.features ?? [], payload.type);
 
     const body = {
-      network: opts?.network ?? NETWORK_ID[this.network],
+      network: this.assertAccountNetwork(opts?.network),
       from: opts?.from ?? this.account?.address,
       ...payload,
     };
@@ -800,6 +804,24 @@ export class TBridge {
    * gives no signal for that. Say so instead of a bare TIMEOUT, so the host can
    * offer a reconnect with its own params (ton_proof etc.).
    */
+  /**
+   * The request's network must be the connected account's one. @tonconnect/sdk
+   * refuses a mismatch (WalletWrongNetworkError); rpc.md:100 leaves it to the
+   * wallet, which an old / buggy wallet may not enforce — and funds would move
+   * on a network the dApp did not mean.
+   */
+  private assertAccountNetwork(requested: string | undefined): string {
+    const network = requested ?? NETWORK_ID[this.network];
+    const chain = this.account?.chain;
+    if (chain && network !== chain) {
+      throw new TBridgeError(
+        'NETWORK_MISMATCH',
+        `Request is for network ${network}, but the connected account is on ${chain}`,
+      );
+    }
+    return network;
+  }
+
   private sendRpc(session: ActiveSession, request: AppRequest): Promise<WalletResponse> {
     return session.send(request).catch((e: unknown) => {
       if (session.kind === 'http' && TBridgeError.is(e) && e.code === 'TIMEOUT') {

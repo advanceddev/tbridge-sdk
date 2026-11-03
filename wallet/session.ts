@@ -188,13 +188,15 @@ function stripSecret(session: PersistedSession): PersistedSession {
 
 export async function loadPersistedSession(
   storage: StorageAdapter,
+  /** Per-instance mode — the module default is shared by every TBridge on the page. */
+  mode: SessionPersistence = persistenceMode,
 ): Promise<PersistedSession | null> {
   try {
     // 'session' mode keeps the whole session tab-scoped; durable storage is only
     // read to migrate / drop what older versions left there.
     let raw: string | null = null;
     let fromDurable = false;
-    if (persistenceMode === 'session') raw = readSessionStorage(STORAGE_KEYS.SESSION);
+    if (mode === 'session') raw = readSessionStorage(STORAGE_KEYS.SESSION);
     if (!raw) {
       raw = await storage.getItem(STORAGE_KEYS.SESSION);
       fromDurable = raw !== null;
@@ -204,7 +206,7 @@ export async function loadPersistedSession(
     if (data.version !== PROTOCOL_VERSION) return null;
     if (!data.account?.address || !data.walletAppName) return null;
 
-    if (persistenceMode === 'session') {
+    if (mode === 'session') {
       let secret = await readEncryptedSessionSecret(STORAGE_KEYS.SESSION_SECRET);
       if (fromDurable) {
         // Legacy layout: blob in durable storage. Move it into this tab, or drop it
@@ -227,11 +229,7 @@ export async function loadPersistedSession(
         : null) ?? (await readEncryptedSessionSecret(STORAGE_KEYS.SESSION_SECRET));
 
     // Promote sessionStorage secret into local blob once (upgrade path)
-    if (
-      secret &&
-      (!data.secretKeyHex || data.secretKeyHex.length === 0) &&
-      persistenceMode === 'local'
-    ) {
+    if (secret && (!data.secretKeyHex || data.secretKeyHex.length === 0) && mode === 'local') {
       const merged = { ...data, secretKeyHex: secret };
       try {
         await storage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(merged));
@@ -251,10 +249,11 @@ export async function loadPersistedSession(
 export async function savePersistedSession(
   storage: StorageAdapter,
   session: PersistedSession,
+  mode: SessionPersistence = persistenceMode,
 ): Promise<void> {
   const secret = session.secretKeyHex;
 
-  if (persistenceMode === 'session') {
+  if (mode === 'session') {
     // Everything tab-scoped: survives reload, erased when the tab / Mini App closes.
     if (secret) await writeEncryptedSessionSecret(STORAGE_KEYS.SESSION_SECRET, secret);
     else removeSessionStorage(STORAGE_KEYS.SESSION_SECRET);
