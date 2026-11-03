@@ -11,6 +11,7 @@ import { t, type TBridgeLocale } from './i18n';
 import type { TBridgeTheme } from './theme';
 import { openWalletLink, isTelegramWalletIdentity } from '../utils/open-wallet-link';
 import { bindBack } from './back-handler';
+import { mountOnTop } from './dom';
 
 export interface ActionSheetHandle {
   close: () => void;
@@ -153,7 +154,7 @@ export function showActionSheet(options: ActionSheetOptions): ActionSheetHandle 
   wrapper.append(side);
 
   overlay.append(wrapper);
-  document.body.appendChild(overlay);
+  const unmount = mountOnTop(overlay);
 
   let closed = false;
   let unbindBack: (() => void) | null = null;
@@ -162,7 +163,7 @@ export function showActionSheet(options: ActionSheetOptions): ActionSheetHandle 
     closed = true;
     unbindBack?.();
     document.removeEventListener('keydown', onKey);
-    overlay.remove();
+    unmount();
   };
 
   const cancel = (): void => {

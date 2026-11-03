@@ -9,7 +9,7 @@ import { t, type TBridgeLocale } from './i18n';
 import type { TBridgeTheme } from './theme';
 import { createLogoSvg, TBRIDGE_BRAND_COLOR } from './logo';
 import { createBackIcon, createCloseIcon } from './icons';
-import { el, isDesktop, lockScroll, unlockScroll } from './dom';
+import { el, isDesktop, lockScroll, mountOnTop, unlockScroll } from './dom';
 import {
   createInitialState,
   reduceModal,
@@ -219,7 +219,7 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
     about.destroy();
     document.removeEventListener('keydown', onKey);
     unlockScroll();
-    overlay.remove();
+    unmount();
     if (!opts?.silent) {
       options.onClose?.();
     }
@@ -259,7 +259,7 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
   syncChrome();
   applyView(null); // first paint
   lockScroll();
-  document.body.append(overlay);
+  const unmount = mountOnTop(overlay);
   closeBtn.focus();
 
   return {

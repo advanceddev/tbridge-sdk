@@ -1233,6 +1233,30 @@ body.tbridge-scroll-lock {
     transition: none !important;
   }
 }
+
+/* Top-layer host (<dialog>.showModal) — above host modals/popovers (ton-connect/sdk#185).
+   pointer-events: hosts (e.g. radix) set body{pointer-events:none} (ton-connect/sdk#568). */
+.tbridge-top {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+  pointer-events: auto;
+}
+.tbridge-top::backdrop {
+  background: transparent;
+}
+.tbridge-overlay,
+.tbridge-sheet-overlay {
+  pointer-events: auto;
+}
 `;
 
 export function ensureStyles(): void {
