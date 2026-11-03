@@ -159,7 +159,7 @@ body.tbridge-scroll-lock {
 .tbridge-modal {
   position: relative;
   width: 100%;
-  max-height: min(88vh, 640px);
+  max-height: min(88vh, 640px, calc(100vh - var(--tb-inset-top) - 8px));
   background: var(--tb-bg);
   border: 1px solid var(--tb-border);
   border-radius: 24px 24px 0 0;
@@ -489,7 +489,7 @@ body.tbridge-scroll-lock {
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   -ms-overflow-style: none;
-  padding: 8px 16px 12px;
+  padding: 8px 16px calc(12px + var(--tb-inset-bottom));
   flex: 1;
   min-height: min(52vh, 400px);
   box-sizing: border-box;
@@ -979,7 +979,7 @@ body.tbridge-scroll-lock {
   align-items: flex-end;
   justify-content: center;
   padding: 12px;
-  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  padding-bottom: max(12px, var(--tb-inset-bottom));
   box-sizing: border-box;
   background: rgba(4, 6, 12, 0.42);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -1232,6 +1232,50 @@ body.tbridge-scroll-lock {
   .tbridge-sheet-open {
     transition: none !important;
   }
+}
+
+/* Top-layer host (<dialog>.showModal) — above host modals/popovers.
+   pointer-events: hosts (e.g. radix) set body{pointer-events:none} */
+.tbridge-top {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+  pointer-events: auto;
+}
+.tbridge-top::backdrop {
+  background: transparent;
+}
+.tbridge-overlay,
+.tbridge-sheet-overlay {
+  pointer-events: auto;
+  /* Safe areas: device notch / home bar (env) and, inside a
+     Telegram Mini App, Telegram's own insets (CSS vars set by telegram-web-app.js). */
+  --tb-inset-top: max(
+    env(safe-area-inset-top, 0px),
+    calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px))
+  );
+  --tb-inset-bottom: max(
+    env(safe-area-inset-bottom, 0px),
+    calc(var(--tg-safe-area-inset-bottom, 0px) + var(--tg-content-safe-area-inset-bottom, 0px))
+  );
+  --tb-inset-left: max(env(safe-area-inset-left, 0px), var(--tg-safe-area-inset-left, 0px));
+  --tb-inset-right: max(env(safe-area-inset-right, 0px), var(--tg-safe-area-inset-right, 0px));
+}
+.tbridge-overlay {
+  padding-left: var(--tb-inset-left);
+  padding-right: var(--tb-inset-right);
+}
+.tbridge-sheet-overlay {
+  padding-left: max(12px, var(--tb-inset-left));
+  padding-right: max(12px, var(--tb-inset-right));
 }
 `;
 

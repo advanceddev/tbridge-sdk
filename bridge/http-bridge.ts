@@ -27,7 +27,12 @@ import type {
   ConnectRequest,
   WalletResponse,
 } from '../core/types';
-import { isConnectEvent, isWalletResponse, mapWalletError } from '../utils/validation';
+import {
+  createEventIdGate,
+  isConnectEvent,
+  isWalletResponse,
+  mapWalletError,
+} from '../utils/validation';
 
 export interface HttpBridgeSession {
   readonly kind: 'http';
@@ -135,11 +140,53 @@ function backoffMs(attempt: number): number {
 /**
  * Detect if running inside Telegram WebApp (Mini App)
  */
+/** Wallet hosted in Telegram (Mini App / bot): t.me link or tg: scheme. */
+export function isTelegramLink(href: string): boolean {
+  try {
+    const u = new URL(href);
+    return u.protocol === 'tg:' || u.hostname === 't.me' || u.hostname.endsWith('.t.me');
+  } catch {
+    return false;
+  }
+}
+
+/** Telegram allows only [A-Za-z0-9_-] in startapp: percent-encode !'()*~ too. */
+function encodeParam(value: string): string {
+  return encodeURIComponent(value).replace(
+    /[!'()*~]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+/**
+ * Telegram passes a Mini App nothing but `startapp` (<= 512 chars, [A-Za-z0-9_-]);
+ * other query params are dropped by some clients (Telegram Desktop on Windows: the
+ * connect never shows).
+ */
+function telegramStartAppLink(base: string, query: string): string {
+  const startapp =
+    'tonconnect-' +
+    query
+      .replaceAll('.', '%2E')
+      .replaceAll('-', '%2D')
+      .replaceAll('_', '%5F')
+      .replaceAll('&', '-')
+      .replaceAll('=', '__')
+      .replaceAll('%', '--');
+  const url = new URL(base);
+  if (url.searchParams.has('attach')) {
+    // legacy attach-menu link → direct Mini App link
+    url.searchParams.delete('attach');
+    url.pathname += '/start';
+  }
+  url.searchParams.append('startapp', startapp);
+  return url.toString();
+}
+
 /**
  * Build wallet connect universal / deep link.
- * Wire format used by wallet apps: `r` is URL-encoded ConnectRequest JSON
- * (wallets decodeURIComponent + JSON.parse — not base64).
- * Launch path (TMA bridge vs browser) is handled by open-wallet-link.
+ * `r` is the URL-encoded ConnectRequest JSON. Telegram-hosted wallets get the
+ * startapp form; launch path (TMA bridge vs browser) is handled by open-wallet-link.
  */
 export function buildConnectLink(params: {
   universalUrl?: string;
@@ -149,13 +196,17 @@ export function buildConnectLink(params: {
   ret?: string;
 }): string {
   const base = params.universalUrl || params.deepLink || 'tc://';
-  const r = encodeURIComponent(JSON.stringify(params.connectRequest));
-  const sep = base.includes('?') ? '&' : '?';
-  let link = `${base}${sep}v=2&id=${params.clientId}&r=${r}`;
-  if (params.ret) {
-    link += `&ret=${encodeURIComponent(params.ret)}`;
-  }
-  return link;
+  const telegram = isTelegramLink(base);
+  const query: Array<[string, string]> = [
+    ['v', '2'],
+    ['id', params.clientId],
+    ['r', JSON.stringify(params.connectRequest)],
+  ];
+  // Telegram: the return target is Telegram itself.
+  if (params.ret && !telegram) query.push(['ret', params.ret]);
+  const qs = query.map(([k, v]) => `${k}=${encodeParam(v)}`).join('&');
+  if (telegram) return telegramStartAppLink(base, qs);
+  return `${base}${base.includes('?') ? '&' : '?'}${qs}`;
 }
 
 interface LiveHttpChannel {
@@ -175,6 +226,8 @@ function openHttpChannel(params: {
   appName: string;
   sessionCrypto: SessionCrypto;
   walletClientId: string | null;
+  /** Last processed wallet event id (persisted). */
+  lastWalletEventId?: number | null;
   timeoutMs: number;
   hooks?: HttpSessionHooks;
 }): LiveHttpChannel {
@@ -184,6 +237,7 @@ function openHttpChannel(params: {
   const abort = new AbortController();
   const pending = new Map<string, PendingRequest>();
   let walletClientId = params.walletClientId;
+  const acceptEventId = createEventIdGate(params.lastWalletEventId ?? null);
   let lastEventId: string | undefined;
   let eventSource: EventSource | null = null;
   let destroyed = false;
@@ -191,6 +245,8 @@ function openHttpChannel(params: {
   let channelDead = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
+  /** Some stream (initial or a retry) has opened at least once. */
+  let everOpened = false;
   const connectWaiters: Array<{
     resolve: (ev: ConnectEvent) => void;
     reject: (err: unknown) => void;
@@ -223,16 +279,29 @@ function openHttpChannel(params: {
   };
 
   function handlePlaintext(plaintext: string, from: string): void {
+    const sender = from.toLowerCase();
+    // Our client_id is public (QR / link / bridge URLs): anyone can encrypt to it.
+    // Once paired, only the wallet's key may talk to us.
+    if (walletClientId && sender !== walletClientId) return;
+
     let msg: unknown;
     try {
       msg = safeJsonParse(plaintext, 'bridge message');
     } catch {
       return;
     }
+    if (
+      msg &&
+      typeof msg === 'object' &&
+      'event' in msg &&
+      !acceptEventId((msg as { id?: unknown }).id)
+    ) {
+      return; // stale / replayed wallet event
+    }
 
     if (isConnectEvent(msg)) {
       if (msg.event === 'connect') {
-        walletClientId = from.toLowerCase();
+        walletClientId = sender;
       }
       for (const w of connectWaiters.splice(0)) {
         clearTimeout(w.timer);
@@ -240,6 +309,8 @@ function openHttpChannel(params: {
       }
       return;
     }
+
+    if (!walletClientId) return; // not paired yet: nothing else is meaningful
 
     // Wallet-initiated disconnect event
     if (msg && typeof msg === 'object' && (msg as { event?: string }).event === 'disconnect') {
@@ -277,6 +348,7 @@ function openHttpChannel(params: {
 
       onOpen = () => {
         opened = true;
+        everOpened = true;
         reconnectAttempt = 0;
         setHealth('connected');
         resolve();
@@ -307,45 +379,49 @@ function openHttpChannel(params: {
 
       onError = () => {
         if (destroyed) return;
-        if (!opened) {
-          cleanupEs();
-          reject(new TBridgeError('HTTP_BRIDGE_ERROR', 'SSE connection failed'));
-          return;
-        }
-        setHealth('reconnecting');
         cleanupEs();
-        if (reconnectAttempt >= SSE_MAX_RECONNECT_ATTEMPTS) {
-          // Hard-stop: no further reconnects, fail pending RPCs, mark channel dead
-          // so subsequent send() fails immediately instead of hanging on timeout.
-          channelDead = true;
-          setHealth('offline');
-          for (const [, p] of pending) {
-            clearTimeout(p.timer);
-            p.reject(
-              new TBridgeError('HTTP_BRIDGE_ERROR', 'Bridge offline after max reconnect attempts'),
-            );
-          }
-          pending.clear();
-          for (const w of connectWaiters.splice(0)) {
-            clearTimeout(w.timer);
-            w.reject(
-              new TBridgeError('HTTP_BRIDGE_ERROR', 'Bridge offline after max reconnect attempts'),
-            );
-          }
-          return;
+        if (opened) {
+          scheduleReconnect();
+        } else {
+          // Caller decides: initial open fails the channel, reconnect attempts retry.
+          reject(new TBridgeError('HTTP_BRIDGE_ERROR', 'SSE connection failed'));
         }
-        const delay = backoffMs(reconnectAttempt++);
-        reconnectTimer = setTimeout(() => {
-          openSse().catch(() => {
-            setHealth('offline');
-          });
-        }, delay);
       };
 
       eventSource.addEventListener('open', onOpen);
       eventSource.addEventListener('message', onMessage as EventListener);
       eventSource.addEventListener('error', onError);
     });
+
+  function scheduleReconnect(): void {
+    if (destroyed) return;
+    if (reconnectAttempt >= SSE_MAX_RECONNECT_ATTEMPTS) {
+      // Hard-stop: no further reconnects, fail pending RPCs, mark channel dead
+      // so subsequent send() fails immediately instead of hanging on timeout.
+      channelDead = true;
+      setHealth('offline');
+      const err = new TBridgeError(
+        'HTTP_BRIDGE_ERROR',
+        'Bridge offline after max reconnect attempts',
+      );
+      for (const [, p] of pending) {
+        clearTimeout(p.timer);
+        p.reject(err);
+      }
+      pending.clear();
+      for (const w of connectWaiters.splice(0)) {
+        clearTimeout(w.timer);
+        w.reject(err);
+      }
+      return;
+    }
+    setHealth('reconnecting');
+    const delay = backoffMs(reconnectAttempt++);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      openSse().catch(scheduleReconnect);
+    }, delay);
+  }
 
   const waitConnectEvent = (timeoutMs: number): Promise<ConnectEvent> =>
     new Promise((resolve, reject) => {
@@ -371,6 +447,41 @@ function openHttpChannel(params: {
 
   // Start SSE immediately (caller awaits openSse via connect/restore)
   const sseReady = openSse();
+  // Initial open failed (often after connect's 2.5 s soft wait, with the QR already
+  // shown): keep retrying in the background so the wallet's approval can still
+  // arrive. Callers that give up destroy the channel, which stops the retries.
+  sseReady.catch(() => {
+    if (!destroyed) scheduleReconnect();
+  });
+
+  /** Encrypt + POST one request to the wallet. Resolves once the bridge accepted it. */
+  const post = async (request: AppRequest, to: string): Promise<void> => {
+    const body = crypto.encrypt(JSON.stringify(request), to);
+    const topic =
+      request.method === 'sendTransaction' ||
+      request.method === 'disconnect' ||
+      request.method === 'signData'
+        ? request.method
+        : undefined;
+    const url = messageUrl(bridgeUrl, clientId, to, BRIDGE_MESSAGE_TTL_SEC, topic);
+    let res: Response;
+    try {
+      // Body: base64(nonce||ciphertext). No Content-Type — matches bridge clients
+      // that POST a bare string body (wallets / Telegram bridge).
+      res = await fetch(url, {
+        method: 'POST',
+        body,
+        signal: abort.signal,
+        credentials: 'omit',
+        cache: 'no-store',
+      });
+    } catch (e) {
+      throw new TBridgeError('HTTP_BRIDGE_ERROR', 'Failed to post message', e);
+    }
+    if (!res.ok) {
+      throw new TBridgeError('HTTP_BRIDGE_ERROR', `Bridge POST failed: HTTP ${res.status}`);
+    }
+  };
 
   const session: HttpBridgeSession = {
     kind: 'http',
@@ -381,22 +492,13 @@ function openHttpChannel(params: {
       return walletClientId ?? '';
     },
     async send(request: AppRequest): Promise<WalletResponse> {
-      await sseReady;
+      if (!everOpened) await sseReady;
       if (destroyed || !walletClientId) {
         throw new TBridgeError('NOT_CONNECTED', 'HTTP session not ready');
       }
       if (channelDead) {
         throw new TBridgeError('HTTP_BRIDGE_ERROR', 'Bridge channel offline — reconnect required');
       }
-      const body = crypto.encrypt(JSON.stringify(request), walletClientId);
-      const topic =
-        request.method === 'sendTransaction' ||
-        request.method === 'disconnect' ||
-        request.method === 'signData'
-          ? request.method
-          : undefined;
-
-      const url = messageUrl(bridgeUrl, clientId, walletClientId, BRIDGE_MESSAGE_TTL_SEC, topic);
 
       const responsePromise = new Promise<WalletResponse>((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -405,29 +507,17 @@ function openHttpChannel(params: {
         }, params.timeoutMs);
         pending.set(request.id, { resolve, reject, timer });
       });
+      responsePromise.catch(() => undefined);
 
       try {
-        // Body: base64(nonce||ciphertext). No Content-Type — matches bridge clients
-        // that POST a bare string body (wallets / Telegram bridge).
-        const res = await fetch(url, {
-          method: 'POST',
-          body,
-          signal: abort.signal,
-          credentials: 'omit',
-          cache: 'no-store',
-        });
-        if (!res.ok) {
-          pending.delete(request.id);
-          throw new TBridgeError('HTTP_BRIDGE_ERROR', `Bridge POST failed: HTTP ${res.status}`);
-        }
+        await post(request, walletClientId);
       } catch (e) {
         const p = pending.get(request.id);
         if (p) {
           clearTimeout(p.timer);
           pending.delete(request.id);
         }
-        if (TBridgeError.is(e)) throw e;
-        throw new TBridgeError('HTTP_BRIDGE_ERROR', 'Failed to post message', e);
+        throw e;
       }
 
       return responsePromise;
@@ -437,12 +527,10 @@ function openHttpChannel(params: {
         session.destroy();
         return;
       }
+      // Fire-and-forget like the reference SDK: the wallet may be closed and never
+      // answer, so only wait for the bridge to accept the POST.
       try {
-        await session.send({
-          method: 'disconnect',
-          params: [],
-          id: String(Date.now()),
-        });
+        await post({ method: 'disconnect', params: [], id: String(Date.now()) }, walletClientId);
       } catch {
         /* best-effort */
       }
@@ -513,10 +601,20 @@ export async function connectHttpBridge(params: {
 
   // Soft-wait for SSE: do not block the link forever if the bridge is slow.
   // waitConnectEvent still requires a live stream to receive the response.
+  let softWaitOver = false;
   await Promise.race([
-    channel.sseReady,
+    channel.sseReady.catch((e: unknown) => {
+      // Failed inside the soft wait: give up (stops retries). Later failures are
+      // retried in the background while we wait for the wallet.
+      if (softWaitOver) return;
+      channel.session.destroy();
+      throw e;
+    }),
     new Promise<void>((resolve) => {
-      window.setTimeout(resolve, SSE_CONNECT_SOFT_TIMEOUT_MS);
+      window.setTimeout(() => {
+        softWaitOver = true;
+        resolve();
+      }, SSE_CONNECT_SOFT_TIMEOUT_MS);
     }),
   ]);
 
@@ -544,6 +642,7 @@ export async function restoreHttpBridge(params: {
   bridgeUrl: string;
   appName: string;
   walletClientId: string;
+  lastWalletEventId?: number | null;
   sessionCrypto: SessionCrypto;
   timeoutMs: number;
   hooks?: HttpSessionHooks;
@@ -553,10 +652,16 @@ export async function restoreHttpBridge(params: {
     appName: params.appName,
     sessionCrypto: params.sessionCrypto,
     walletClientId: params.walletClientId,
+    lastWalletEventId: params.lastWalletEventId,
     timeoutMs: params.timeoutMs,
     hooks: params.hooks,
   });
 
-  await channel.sseReady;
+  try {
+    await channel.sseReady;
+  } catch (e) {
+    channel.session.destroy(); // restore gives up: stop background retries
+    throw e;
+  }
   return channel.session;
 }

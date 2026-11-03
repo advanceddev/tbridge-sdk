@@ -18,6 +18,7 @@
 import { PROTOCOL_VERSION, STORAGE_KEYS } from '../core/constants';
 import { bytesToBase64, base64ToBytes } from '../core/encoding';
 import { safeJsonParse } from '../core/security';
+import { TBridgeError } from '../core/errors';
 import type { StorageAdapter } from '../core/storage';
 import type { PersistedSession } from '../core/types';
 
@@ -141,6 +142,8 @@ async function decryptSecretFromStorage(payload: string): Promise<string | null>
 async function readEncryptedSessionSecret(key: string): Promise<string | null> {
   const stored = readSessionStorage(key);
   if (!stored) return null;
+  // Plain hex when no __WALLET_SESSION_SECRET__ was configured at write time.
+  if (!stored.startsWith('enc:')) return stored;
   try {
     return await decryptSecretFromStorage(stored);
   } catch {
@@ -151,8 +154,10 @@ async function readEncryptedSessionSecret(key: string): Promise<string | null> {
 
 async function writeEncryptedSessionSecret(key: string, value: string): Promise<void> {
   try {
+    // Without a passphrase store as-is: tab scope is the protection 'session' mode
+    // promises. Previously nothing was written and restore could never succeed.
     const encrypted = await encryptSecretForStorage(value);
-    if (encrypted) writeSessionStorage(key, encrypted);
+    writeSessionStorage(key, encrypted ?? value);
   } catch {
     /* ignore */
   }
@@ -183,29 +188,38 @@ function stripSecret(session: PersistedSession): PersistedSession {
 
 export async function loadPersistedSession(
   storage: StorageAdapter,
+  /** Per-instance mode — the module default is shared by every TBridge on the page. */
+  mode: SessionPersistence = persistenceMode,
 ): Promise<PersistedSession | null> {
   try {
-    const raw = await storage.getItem(STORAGE_KEYS.SESSION);
+    // 'session' mode keeps the whole session tab-scoped; durable storage is only
+    // read to migrate / drop what older versions left there.
+    let raw: string | null = null;
+    let fromDurable = false;
+    if (mode === 'session') raw = readSessionStorage(STORAGE_KEYS.SESSION);
+    if (!raw) {
+      raw = await storage.getItem(STORAGE_KEYS.SESSION);
+      fromDurable = raw !== null;
+    }
     if (!raw) return null;
     const data = safeJsonParse<PersistedSession>(raw, 'session');
     if (data.version !== PROTOCOL_VERSION) return null;
     if (!data.account?.address || !data.walletAppName) return null;
 
-    if (persistenceMode === 'session') {
-      // Volatile: secret only from sessionStorage
+    if (mode === 'session') {
       let secret = await readEncryptedSessionSecret(STORAGE_KEYS.SESSION_SECRET);
-      if (!secret && typeof data.secretKeyHex === 'string' && data.secretKeyHex.length > 0) {
-        // Migrate legacy full blob → sessionStorage
-        secret = data.secretKeyHex;
-        await writeEncryptedSessionSecret(STORAGE_KEYS.SESSION_SECRET, secret);
-        try {
-          await storage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(stripSecret(data)));
-        } catch {
-          /* ignore */
+      if (fromDurable) {
+        // Legacy layout: blob in durable storage. Move it into this tab, or drop it
+        // when the tab that owned the secret is gone.
+        if (!secret && typeof data.secretKeyHex === 'string' && data.secretKeyHex.length > 0) {
+          secret = data.secretKeyHex;
         }
+        await storage.removeItem(STORAGE_KEYS.SESSION).catch(() => undefined);
+        if (!secret) return null;
+        writeSessionStorage(STORAGE_KEYS.SESSION, JSON.stringify(stripSecret(data)));
+        await writeEncryptedSessionSecret(STORAGE_KEYS.SESSION_SECRET, secret);
       }
-      if (secret) return { ...stripSecret(data), secretKeyHex: secret };
-      return stripSecret(data);
+      return secret ? { ...stripSecret(data), secretKeyHex: secret } : null;
     }
 
     // Durable (default): secret lives in the adapter blob (localStorage)
@@ -215,11 +229,7 @@ export async function loadPersistedSession(
         : null) ?? (await readEncryptedSessionSecret(STORAGE_KEYS.SESSION_SECRET));
 
     // Promote sessionStorage secret into local blob once (upgrade path)
-    if (
-      secret &&
-      (!data.secretKeyHex || data.secretKeyHex.length === 0) &&
-      persistenceMode === 'local'
-    ) {
+    if (secret && (!data.secretKeyHex || data.secretKeyHex.length === 0) && mode === 'local') {
       const merged = { ...data, secretKeyHex: secret };
       try {
         await storage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(merged));
@@ -239,13 +249,24 @@ export async function loadPersistedSession(
 export async function savePersistedSession(
   storage: StorageAdapter,
   session: PersistedSession,
+  mode: SessionPersistence = persistenceMode,
 ): Promise<void> {
   const secret = session.secretKeyHex;
 
-  if (persistenceMode === 'session') {
+  if (mode === 'session') {
+    // Everything tab-scoped: survives reload, erased when the tab / Mini App closes.
     if (secret) await writeEncryptedSessionSecret(STORAGE_KEYS.SESSION_SECRET, secret);
     else removeSessionStorage(STORAGE_KEYS.SESSION_SECRET);
-    await storage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(stripSecret(session)));
+    writeSessionStorage(STORAGE_KEYS.SESSION, JSON.stringify(stripSecret(session)));
+    // Same policy as durable storage: an unwritable store aborts the connection
+    // (sessionStorage can be disabled / full in private mode and some WebViews).
+    if (
+      readSessionStorage(STORAGE_KEYS.SESSION) === null ||
+      (secret && readSessionStorage(STORAGE_KEYS.SESSION_SECRET) === null)
+    ) {
+      throw new TBridgeError('STORAGE_ERROR', 'sessionStorage is not writable');
+    }
+    await storage.removeItem(STORAGE_KEYS.SESSION).catch(() => undefined); // legacy copy
     return;
   }
 
@@ -253,11 +274,13 @@ export async function savePersistedSession(
   await storage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(session));
   // Clear any leftover tab-scoped copy to avoid split-brain
   removeSessionStorage(STORAGE_KEYS.SESSION_SECRET);
+  removeSessionStorage(STORAGE_KEYS.SESSION);
 }
 
 export async function clearPersistedSession(storage: StorageAdapter): Promise<void> {
   await storage.removeItem(STORAGE_KEYS.SESSION);
   removeSessionStorage(STORAGE_KEYS.SESSION_SECRET);
+  removeSessionStorage(STORAGE_KEYS.SESSION);
   await storage.removeItem(STORAGE_KEYS.LAST_WALLET);
   await storage.removeItem(STORAGE_KEYS.LAST_RPC_ID).catch(() => undefined);
 }

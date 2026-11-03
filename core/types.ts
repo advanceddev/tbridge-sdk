@@ -284,6 +284,8 @@ export interface PersistedSession {
    * lazily after a page reload without re-connecting.
    */
   connectItems?: ConnectItemReply[];
+  /** Last processed wallet event id — restore baseline for rpc.md:56 ordering. */
+  lastWalletEventId?: number;
 }
 
 // ---------------------------------------------------------------------------

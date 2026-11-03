@@ -1,6 +1,6 @@
 /**
  * TBridge — main SDK entry (framework-agnostic).
- * Phase 2: HTTP restore, signData, rate limiting, origin-bound sessions,
+ * HTTP restore, signData, rate limiting, origin-bound sessions,
  * bridge health events, parallel discovery.
  */
 
@@ -11,6 +11,7 @@ import {
   RPC_RATE_CAPACITY,
   RPC_RATE_REFILL_PER_SEC,
   SESSION_MAX_AGE_MS,
+  STORAGE_KEYS,
   TBRIDGE_VERSION,
 } from '../core/constants';
 import type { CryptoProvider } from '../core/crypto';
@@ -21,6 +22,7 @@ import { assertSafeManifestUrl, currentOrigin, RateLimiter } from '../core/secur
 import { LocalStorageAdapter, type StorageAdapter } from '../core/storage';
 import type {
   Account,
+  AppRequest,
   BridgeHealth,
   ConnectionStatus,
   ConnectRequest,
@@ -30,6 +32,7 @@ import type {
   TBridgeEventMap,
   TBridgeOptions,
   WalletInfo,
+  WalletResponse,
 } from '../core/types';
 import { NETWORK_ID } from '../core/types';
 import {
@@ -38,9 +41,11 @@ import {
   type HttpBridgeSession,
 } from '../bridge/http-bridge';
 import { connectJsBridge, restoreJsBridge, type JsBridgeSession } from '../bridge/js-bridge';
-import { detectInjectedWallet, getInjectedBridge } from '../utils/browser';
+import { detectInjectedWallet, detectInjectedWallets, getInjectedBridge } from '../utils/browser';
 import {
   assertDeviceInfo,
+  assertSendTransactionSupported,
+  assertSignDataSupported,
   extractAccountFromConnect,
   mapWalletError,
   validateSendTransaction,
@@ -79,13 +84,13 @@ export class TBridge {
   private readonly storage: StorageAdapter;
   private readonly cryptoProvider?: CryptoProvider;
   private readonly sessionMaxAgeMs: number;
+  private readonly sessionPersistence: 'local' | 'session';
   private readonly discovery: WalletDiscovery;
   private readonly emitter = new TypedEventEmitter<TBridgeEventMap>();
   private readonly rateLimiter = new RateLimiter(RPC_RATE_CAPACITY, RPC_RATE_REFILL_PER_SEC);
 
   private status: ConnectionStatus = { status: 'disconnected' };
   private account: Account | null = null;
-  /** Last successful connect item replies (ton_addr, ton_proof, …) */
   private lastConnectItems: import('../core/types').ConnectItemReply[] | null = null;
   private device: DeviceInfo | null = null;
   private currentWallet: WalletInfo | null = null;
@@ -96,7 +101,7 @@ export class TBridge {
   private theme: TBridgeTheme;
   private connecting = false;
   private restoring = false;
-  /** Cleanup for in-flight HTTP connect (SSE channel) */
+  private connectGeneration = 0;
   private pendingConnectCleanup: (() => void) | null = null;
 
   constructor(options: TBridgeOptions & { crypto?: CryptoProvider }) {
@@ -119,14 +124,31 @@ export class TBridge {
     this.storage = options.storage ?? new LocalStorageAdapter();
     this.cryptoProvider = options.crypto;
     this.sessionMaxAgeMs = options.sessionMaxAgeMs ?? SESSION_MAX_AGE_MS;
-    setSessionPersistence(options.sessionPersistence === 'session' ? 'session' : 'local');
+    this.sessionPersistence = options.sessionPersistence === 'session' ? 'session' : 'local';
+    setSessionPersistence(this.sessionPersistence);
     this.locale = normalizeLocale(options.locale);
     this.theme = normalizeTheme(options.theme);
     this.discovery = new WalletDiscovery(
       options.walletsRegistry ?? DEFAULT_WALLETS_REGISTRY_URL,
       this.storage,
     );
+    window.addEventListener('storage', this.onStorageEvent);
   }
+
+  /**
+   * Storage events never fire in the tab that made the change.
+   */
+  private readonly onStorageEvent = (e: StorageEvent): void => {
+    // 'session' mode: each tab owns its own session — other tabs must not end it.
+    if (this.sessionPersistence === 'session') return;
+    if (!this.isConnected || e.newValue !== null) return;
+    if (e.key !== null && e.key !== STORAGE_KEYS.SESSION && e.key !== STORAGE_KEYS.LAST_WALLET) {
+      return;
+    }
+    this.teardownSession();
+    this.setStatus({ status: 'disconnected' });
+    this.emitter.emit('disconnect', { reason: 'local' });
+  };
 
   get connectionStatus(): ConnectionStatus {
     return this.status;
@@ -163,6 +185,13 @@ export class TBridge {
     return this.emitter.on(event, handler);
   }
 
+  once<K extends keyof TBridgeEventMap>(
+    event: K,
+    handler: (payload: TBridgeEventMap[K]) => void,
+  ): () => void {
+    return this.emitter.once(event, handler);
+  }
+
   async getWallets(forceRefresh = false): Promise<WalletInfo[]> {
     return this.discovery.getWallets(forceRefresh);
   }
@@ -191,11 +220,20 @@ export class TBridge {
     return loadLastWallet(this.storage);
   }
 
-  async detectInjected(): Promise<{ appName: string; key: string } | null> {
+  async detectInjected(): Promise<{
+    appName: string;
+    key: string;
+    /** True when the page runs inside the wallet's own browser */
+    isWalletBrowser: boolean;
+  } | null> {
     const wallets = await this.discovery.getWallets();
     const detected = detectInjectedWallet(wallets);
     if (!detected) return null;
-    return { appName: detected.appName, key: detected.key };
+    return {
+      appName: detected.appName,
+      key: detected.key,
+      isWalletBrowser: detected.bridge.isWalletBrowser === true,
+    };
   }
 
   async connect(options: TBridgeConnectOptions = {}): Promise<ConnectionStatus> {
@@ -210,9 +248,19 @@ export class TBridge {
     this.connecting = true;
     this.setStatus({ status: 'connecting' });
 
+    const gen = ++this.connectGeneration;
+    const stale = () => gen !== this.connectGeneration;
+    /** After every await: bail out if cancelled; tell the wallet to drop a late session. */
+    const ensureCurrent = (late?: ActiveSession): void => {
+      if (!stale()) return;
+      if (late) void late.disconnect().catch(() => undefined);
+      throw new TBridgeError('USER_REJECTED', 'Connect cancelled');
+    };
+
     try {
       // Parallel: wallets list + nothing else blocking
       const wallets = await this.discovery.getWallets();
+      ensureCurrent();
       const connectRequest = this.buildConnectRequest(options.tonProofPayload);
 
       const injected = detectInjectedWallet(wallets);
@@ -228,6 +276,7 @@ export class TBridge {
           timeoutMs: this.requestTimeoutMs,
           hooks: this.createJsHooks(),
         });
+        ensureCurrent(session);
 
         this.applyConnectSuccess(event, wallet, session);
         await saveLastWallet(this.storage, wallet.app_name);
@@ -255,6 +304,7 @@ export class TBridge {
           timeoutMs: this.requestTimeoutMs,
           hooks: this.createJsHooks(),
         });
+        ensureCurrent(session);
         this.applyConnectSuccess(event, wallet, session);
         await saveLastWallet(this.storage, wallet.app_name);
         return this.status;
@@ -276,6 +326,8 @@ export class TBridge {
       }
 
       const sessionCrypto = await SessionCrypto.create(this.cryptoProvider);
+      if (stale()) sessionCrypto.dispose();
+      ensureCurrent();
       this.sessionCrypto = sessionCrypto;
 
       const hooks = this.createHttpHooks();
@@ -301,37 +353,51 @@ export class TBridge {
           };
         },
       });
+      ensureCurrent(session);
       this.pendingConnectCleanup = null;
 
       this.applyConnectSuccess(event, wallet, session);
 
       const keys = sessionCrypto.exportKeys();
-      await savePersistedSession(this.storage, {
-        version: PROTOCOL_VERSION,
-        walletAppName: wallet.app_name,
-        clientId: keys.publicKeyHex,
-        walletClientId: session.kind === 'http' ? session.walletClientId : '',
-        bridgeUrl: sse.url,
-        account: this.account!,
-        device: this.device!,
-        createdAt: Date.now(),
-        origin: currentOrigin(),
-        secretKeyHex: keys.secretKeyHex,
-        lastRpcId: this.requestId,
-        connectItems: this.lastConnectItems ?? undefined,
-      });
+      // By design: a storage failure aborts the connection (see catch below).
+      await savePersistedSession(
+        this.storage,
+        {
+          version: PROTOCOL_VERSION,
+          walletAppName: wallet.app_name,
+          clientId: keys.publicKeyHex,
+          walletClientId: session.kind === 'http' ? session.walletClientId : '',
+          bridgeUrl: sse.url,
+          account: this.account!,
+          device: this.device!,
+          createdAt: Date.now(),
+          origin: currentOrigin(),
+          secretKeyHex: keys.secretKeyHex,
+          lastRpcId: this.requestId,
+          connectItems: this.lastConnectItems ?? undefined,
+          lastWalletEventId: event.id,
+        },
+        this.sessionPersistence,
+      );
       await saveLastRpcId(this.storage, this.requestId);
       await saveLastWallet(this.storage, wallet.app_name);
 
       return this.status;
     } catch (e) {
+      const err = TBridgeError.is(e) ? e : new TBridgeError('UNKNOWN', 'Connect failed', e);
+      // A superseded attempt must not tear down / report over the current state.
+      if (stale()) throw err;
+      // If the wallet already paired, end its side too — otherwise
+      // it keeps showing the dApp as connected. No-op for an unpaired HTTP channel.
+      const live = this.session;
+      this.session = null;
+      if (live) void live.disconnect().catch(() => undefined);
       this.teardownSession();
       this.setStatus({ status: 'disconnected' });
-      const err = TBridgeError.is(e) ? e : new TBridgeError('UNKNOWN', 'Connect failed', e);
       this.emitter.emit('error', err);
       throw err;
     } finally {
-      this.connecting = false;
+      if (!stale()) this.connecting = false;
     }
   }
 
@@ -341,6 +407,7 @@ export class TBridge {
    */
   cancelConnect(): void {
     if (!this.connecting && !this.pendingConnectCleanup) return;
+    this.connectGeneration += 1;
     try {
       this.pendingConnectCleanup?.();
     } catch {
@@ -367,9 +434,15 @@ export class TBridge {
     try {
       const wallets = await this.discovery.getWallets();
 
-      // 1. Injected JS bridge — fastest path (Telegram Mini-App etc.)
-      const injected = detectInjectedWallet(wallets);
-      if (injected) {
+      // 1. Injected JS bridge — fastest path. Several extensions can be installed and
+      //    each may remember this dApp, so honour the wallet the user connected last;
+      //    if that was an HTTP wallet, skip extensions and restore its session below.
+      const injectedList = detectInjectedWallets(wallets);
+      const lastWallet = await loadLastWallet(this.storage).catch(() => null);
+      const candidates = lastWallet
+        ? injectedList.filter((i) => i.appName === lastWallet)
+        : injectedList;
+      for (const injected of candidates) {
         const restored = await restoreJsBridge({
           bridgeKey: injected.key,
           appName: injected.appName,
@@ -386,7 +459,7 @@ export class TBridge {
       }
 
       // 2. Persisted HTTP session
-      const persisted = await loadPersistedSession(this.storage);
+      const persisted = await loadPersistedSession(this.storage, this.sessionPersistence);
       if (!persisted?.secretKeyHex || !persisted.bridgeUrl || !persisted.walletClientId) {
         return this.status;
       }
@@ -406,7 +479,9 @@ export class TBridge {
 
       const wallet = wallets.find((w) => w.app_name === persisted.walletAppName) ?? null;
       if (!wallet) {
-        await clearPersistedSession(this.storage);
+        // The list may be the built-in fallback (registry down) or older than the
+        // wallet: keep the session for the next attempt instead of wiping it.
+        this.log('persisted wallet not in current list — restore skipped');
         return this.status;
       }
 
@@ -421,6 +496,8 @@ export class TBridge {
         bridgeUrl: persisted.bridgeUrl,
         appName: persisted.walletAppName,
         walletClientId: persisted.walletClientId,
+        lastWalletEventId:
+          typeof persisted.lastWalletEventId === 'number' ? persisted.lastWalletEventId : null,
         sessionCrypto,
         timeoutMs: this.requestTimeoutMs,
         hooks,
@@ -452,7 +529,14 @@ export class TBridge {
     } catch (e) {
       this.log('restoreConnection failed', e);
       this.teardownSession();
-      await clearPersistedSession(this.storage).catch(() => undefined);
+      // Offline / bridge or registry down is temporary: keep the session for the
+      // next attempt. Only drop it when the stored data itself is unusable.
+      const transient =
+        TBridgeError.is(e) &&
+        (e.code === 'HTTP_BRIDGE_ERROR' || e.code === 'BRIDGE_UNAVAILABLE' || e.code === 'TIMEOUT');
+      if (!transient) {
+        await clearPersistedSession(this.storage).catch(() => undefined);
+      }
       return this.status;
     } finally {
       this.restoring = false;
@@ -497,10 +581,11 @@ export class TBridge {
     assertBrowser();
     this.assertCanRpc();
     validateSendTransaction(tx);
+    assertSendTransactionSupported(this.device?.features ?? [], tx);
 
     const payload = {
       valid_until: tx.validUntil,
-      network: tx.network ?? NETWORK_ID[this.network],
+      network: this.assertAccountNetwork(tx.network),
       from: tx.from ?? this.account?.address,
       messages: tx.messages.map((m) => ({
         address: m.address,
@@ -511,10 +596,14 @@ export class TBridge {
       })),
     };
 
+    const session = this.session!;
+    const id = this.nextId();
+    // Persist before sending: a rejected / timed-out request still consumed the id,
+    // and wallets silently drop non-increasing ids after a reload.
+    await this.bumpPersistedRpcId();
+
     const clientId =
-      this.sessionCrypto?.clientId ??
-      (this.session?.kind === 'http' ? this.session.clientId : '') ??
-      '';
+      this.sessionCrypto?.clientId ?? (session.kind === 'http' ? session.clientId : '') ?? '';
 
     let sheet: ActionSheetHandle | null = null;
     let rejectCancel: ((err: TBridgeError) => void) | null = null;
@@ -522,7 +611,7 @@ export class TBridge {
       rejectCancel = reject;
     });
 
-    if (this.session?.kind === 'http' && clientId) {
+    if (session.kind === 'http' && clientId) {
       sheet = showActionSheet({
         locale: this.locale,
         theme: this.theme,
@@ -537,10 +626,10 @@ export class TBridge {
 
     try {
       const response = await Promise.race([
-        this.session!.send({
+        this.sendRpc(session, {
           method: 'sendTransaction',
           params: [JSON.stringify(payload)],
-          id: this.nextId(),
+          id,
         }),
         cancelPromise,
       ]);
@@ -553,7 +642,6 @@ export class TBridge {
 
       const boc =
         typeof response.result === 'string' ? response.result : String(response.result ?? '');
-      await this.bumpPersistedRpcId();
       return { boc };
     } catch (e) {
       sheet?.close();
@@ -573,17 +661,20 @@ export class TBridge {
     assertBrowser();
     this.assertCanRpc();
     validateSignData(payload);
+    assertSignDataSupported(this.device?.features ?? [], payload.type);
 
     const body = {
-      network: opts?.network ?? NETWORK_ID[this.network],
+      network: this.assertAccountNetwork(opts?.network),
       from: opts?.from ?? this.account?.address,
       ...payload,
     };
 
+    const session = this.session!;
+    const id = this.nextId();
+    await this.bumpPersistedRpcId(); // see sendTransaction
+
     const clientId =
-      this.sessionCrypto?.clientId ??
-      (this.session?.kind === 'http' ? this.session.clientId : '') ??
-      '';
+      this.sessionCrypto?.clientId ?? (session.kind === 'http' ? session.clientId : '') ?? '';
 
     let sheet: ActionSheetHandle | null = null;
     let rejectCancel: ((err: TBridgeError) => void) | null = null;
@@ -591,7 +682,7 @@ export class TBridge {
       rejectCancel = reject;
     });
 
-    if (this.session?.kind === 'http' && clientId) {
+    if (session.kind === 'http' && clientId) {
       sheet = showActionSheet({
         locale: this.locale,
         theme: this.theme,
@@ -606,10 +697,10 @@ export class TBridge {
 
     try {
       const response = await Promise.race([
-        this.session!.send({
+        this.sendRpc(session, {
           method: 'signData',
           params: [JSON.stringify(body)],
-          id: this.nextId(),
+          id,
         }),
         cancelPromise,
       ]);
@@ -620,7 +711,6 @@ export class TBridge {
         throw mapWalletError(response.error.code, response.error.message);
       }
 
-      await this.bumpPersistedRpcId();
       if (typeof response.result === 'string') {
         return { signature: response.result };
       }
@@ -645,8 +735,10 @@ export class TBridge {
       /* ignore */
     }
     this.pendingConnectCleanup = null;
+    this.connectGeneration += 1;
     this.connecting = false;
     this.restoring = false;
+    window.removeEventListener('storage', this.onStorageEvent);
     this.teardownSession();
     this.emitter.removeAllListeners();
     this.setStatus({ status: 'disconnected' });
@@ -691,14 +783,51 @@ export class TBridge {
 
   /**
    * RPC request id — MUST be a decimal integer string, strictly increasing
-   * per session. Wallets reject non-numeric / non-monotonic ids (often with
-   * no UI). Spec: rpc.md AppRequest.id
+   * per session. Wallets reject non-numeric / non-monotonic ids (often with no UI).
    */
   private nextId(): string {
     // TonConnect starts at 0 and increments after issue
     const id = String(this.requestId);
     this.requestId += 1;
     return id;
+  }
+
+  /**
+   * An HTTP wallet that never answers is usually closed, or its session was
+   * replaced by a connect from another device - the bridge
+   * gives no signal for that. Say so instead of a bare TIMEOUT, so the host can
+   * offer a reconnect with its own params (ton_proof etc.).
+   */
+  /**
+   * The request's network must be the connected account's one. @tonconnect/sdk
+   * refuses a mismatch (WalletWrongNetworkError);  leaves it to the
+   * wallet, which an old / buggy wallet may not enforce — and funds would move
+   * on a network the dApp did not mean.
+   */
+  private assertAccountNetwork(requested: string | undefined): string {
+    const network = requested ?? NETWORK_ID[this.network];
+    const chain = this.account?.chain;
+    if (chain && network !== chain) {
+      throw new TBridgeError(
+        'NETWORK_MISMATCH',
+        `Request is for network ${network}, but the connected account is on ${chain}`,
+      );
+    }
+    return network;
+  }
+
+  private sendRpc(session: ActiveSession, request: AppRequest): Promise<WalletResponse> {
+    return session.send(request).catch((e: unknown) => {
+      if (session.kind === 'http' && TBridgeError.is(e) && e.code === 'TIMEOUT') {
+        throw new TBridgeError(
+          'WALLET_UNRESPONSIVE',
+          'Wallet did not respond. It may be closed, or this session was replaced by a ' +
+            'connection from another device — reconnect the wallet.',
+          e,
+        );
+      }
+      throw e;
+    });
   }
 
   private async bumpPersistedRpcId(): Promise<void> {
@@ -729,6 +858,8 @@ export class TBridge {
     if (event.event !== 'connect') {
       throw new TBridgeError('PROTOCOL_ERROR', 'Expected connect event');
     }
+    // Owned from here on: a throw below lets connect()'s catch disconnect the wallet.
+    this.session = session;
     assertDeviceInfo(event.payload.device);
     const accountData = extractAccountFromConnect(event.payload.items);
 
@@ -737,11 +868,6 @@ export class TBridge {
     // mainnet/testnet mix-ups are unacceptable for enterprise fintech.
     const expectedNetwork = NETWORK_ID[this.network];
     if (accountData.network !== expectedNetwork) {
-      try {
-        session.destroy();
-      } catch {
-        /* ignore */
-      }
       throw new TBridgeError(
         'NETWORK_MISMATCH',
         `Wallet returned network ${accountData.network}, expected ${expectedNetwork}`,

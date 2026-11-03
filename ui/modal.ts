@@ -9,7 +9,7 @@ import { t, type TBridgeLocale } from './i18n';
 import type { TBridgeTheme } from './theme';
 import { createLogoSvg, TBRIDGE_BRAND_COLOR } from './logo';
 import { createBackIcon, createCloseIcon } from './icons';
-import { el, isDesktop, lockScroll, unlockScroll } from './dom';
+import { el, isDesktop, lockScroll, mountOnTop, unlockScroll } from './dom';
 import {
   createInitialState,
   reduceModal,
@@ -20,6 +20,7 @@ import {
 import { createAboutOverlay } from './about';
 import { renderWalletGrid } from './wallet-grid';
 import { renderWaitingView } from './waiting-view';
+import { bindBack } from './back-handler';
 
 export interface WalletModalOptions {
   wallets: WalletInfo[];
@@ -209,13 +210,16 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
     applyView(prev);
   };
 
+  let unbindBack: (() => void) | null = null;
+
   const close = (opts?: { silent?: boolean }): void => {
     if (state.closed) return;
     dispatch({ type: 'close' });
+    unbindBack?.();
     about.destroy();
     document.removeEventListener('keydown', onKey);
     unlockScroll();
-    overlay.remove();
+    unmount();
     if (!opts?.silent) {
       options.onClose?.();
     }
@@ -236,10 +240,26 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
   });
   document.addEventListener('keydown', onKey);
 
+  // Platform back (Android / iOS swipe / browser / Telegram BackButton) mirrors the
+  // in-modal controls: about → close it, waiting → list, list → close.
+  unbindBack = bindBack(() => {
+    if (about.isOpen()) {
+      about.close();
+      return true;
+    }
+    if (state.mode === 'waiting') {
+      options.onBackFromWaiting?.();
+      dispatch({ type: 'show_list' });
+      return true;
+    }
+    close();
+    return false;
+  });
+
   syncChrome();
   applyView(null); // first paint
   lockScroll();
-  document.body.append(overlay);
+  const unmount = mountOnTop(overlay);
   closeBtn.focus();
 
   return {

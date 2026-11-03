@@ -79,6 +79,14 @@ function isTelegramHosted(href: string): boolean {
 
 export function withReturnStrategy(href: string, strategy: ReturnStrategy): string {
   if (!strategy) return href;
+  // Telegram startapp links carry everything inside startapp; a plain `ret` next to
+  // it is not delivered and only changes the verified link format.
+  if (
+    isTelegramHosted(href) &&
+    safeUrl(href)?.searchParams.get('startapp')?.startsWith('tonconnect-')
+  ) {
+    return href;
+  }
   try {
     if (isHttpUrl(href)) {
       const u = new URL(href);
@@ -131,11 +139,20 @@ export function openLink(href: string, target: LinkTarget = '_blank'): void {
    */
   const preserveDocument = target !== '_self';
 
-  // 1) window.open — best chance to keep current page
+  // 1) window.open — best chance to keep current page.
+  // No 'noopener' feature: per spec window.open then always returns null, so success
+  // was undetectable and the <a> fallback opened the wallet a second time.
   if (target === '_blank') {
     try {
-      const win = window.open(href, '_blank', 'noopener,noreferrer');
-      if (win) return;
+      const win = window.open(href, '_blank');
+      if (win) {
+        try {
+          win.opener = null;
+        } catch {
+          /* cross-origin already */
+        }
+        return;
+      }
     } catch {
       /* continue */
     }

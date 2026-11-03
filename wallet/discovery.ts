@@ -10,6 +10,7 @@ import type { StorageAdapter } from '../core/storage';
 import type { WalletInfo } from '../core/types';
 import { assertBrowser } from '../utils/browser';
 import { fetchWalletsRegistry, parseWalletsRegistry } from './registry';
+import { FALLBACK_WALLETS } from './fallback-wallets';
 import { collectWalletImageUrls, prefetchImages } from '../utils/prefetch-images';
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -144,7 +145,12 @@ export class WalletDiscovery {
         this.cache = stale;
         return stale;
       }
-      throw e;
+      // First visit + registry down: built-in list. Only for
+      // the default registry — a custom one is curated by the host, so never
+      // substitute wallets it may have excluded (@tonconnect/sdk does, for any source).
+      if (this.registryUrl !== DEFAULT_WALLETS_REGISTRY_URL) throw e;
+      this.cache = parseWalletsRegistry(FALLBACK_WALLETS, 'fallback');
+      return this.cache;
     }
   }
 
