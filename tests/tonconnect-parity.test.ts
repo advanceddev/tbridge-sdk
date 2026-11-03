@@ -316,13 +316,13 @@ describe('cross-tab disconnect (ton-connect/sdk#569)', () => {
 // ---------------------------------------------------------------------------
 // ton-connect/sdk#575 — wallet list unavailable; reference SDK uses FALLBACK_WALLETS_LIST
 // ---------------------------------------------------------------------------
-describe('wallets registry fallback (ton-connect/sdk#575)', () => {
-  const offline = () => {
-    g.fetch = vi.fn(async () => {
-      throw new TypeError('Failed to fetch');
-    });
-  };
+const offline = () => {
+  g.fetch = vi.fn(async () => {
+    throw new TypeError('Failed to fetch');
+  });
+};
 
+describe('wallets registry fallback (ton-connect/sdk#575)', () => {
   it('returns a built-in wallet list when the default registry is unreachable and nothing is cached', async () => {
     offline();
     const wallets = await makeBridge(new MemoryStorageAdapter(), {
@@ -431,5 +431,34 @@ describe('wallet list per platform (ton-connect/sdk#69)', () => {
   });
   it('desktop: everything (mobile wallets connect via QR)', () => {
     expect(names('macos')).toEqual(['both', 'ext', 'ios-only', 'android-only']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ton-connect/sdk#327 — wallet re-connected on another device stops answering this one.
+// Undetectable on our side; the timeout must say what likely happened.
+// ---------------------------------------------------------------------------
+async function restoredWithTimeout() {
+  mockFetch();
+  const storage = new MemoryStorageAdapter();
+  await seedHttpSession(storage);
+  const bridge = makeBridge(storage, { requestTimeoutMs: 50 });
+  await restoreHttp(bridge);
+  return bridge;
+}
+
+describe('unresponsive wallet (ton-connect/sdk#327)', () => {
+  it('sendTransaction: no reply from the wallet → WALLET_UNRESPONSIVE', async () => {
+    const bridge = await restoredWithTimeout();
+    await expect(bridge.sendTransaction(tx())).rejects.toMatchObject({
+      code: 'WALLET_UNRESPONSIVE',
+    });
+  });
+
+  it('signData: no reply from the wallet → WALLET_UNRESPONSIVE', async () => {
+    const bridge = await restoredWithTimeout();
+    await expect(bridge.signData({ type: 'text', text: 'hi' })).rejects.toMatchObject({
+      code: 'WALLET_UNRESPONSIVE',
+    });
   });
 });

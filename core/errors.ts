@@ -14,6 +14,8 @@ export type TBridgeErrorCode =
   | 'JS_BRIDGE_MISSING'
   | 'HTTP_BRIDGE_ERROR'
   | 'TIMEOUT'
+  /** HTTP wallet never answered an RPC — closed, or the session was replaced on another device */
+  | 'WALLET_UNRESPONSIVE'
   | 'USER_REJECTED'
   | 'INVALID_MANIFEST'
   | 'INVALID_PAYLOAD'

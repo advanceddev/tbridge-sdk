@@ -22,6 +22,7 @@ import { assertSafeManifestUrl, currentOrigin, RateLimiter } from '../core/secur
 import { LocalStorageAdapter, type StorageAdapter } from '../core/storage';
 import type {
   Account,
+  AppRequest,
   BridgeHealth,
   ConnectionStatus,
   ConnectRequest,
@@ -31,6 +32,7 @@ import type {
   TBridgeEventMap,
   TBridgeOptions,
   WalletInfo,
+  WalletResponse,
 } from '../core/types';
 import { NETWORK_ID } from '../core/types';
 import {
@@ -625,7 +627,7 @@ export class TBridge {
 
     try {
       const response = await Promise.race([
-        session.send({
+        this.sendRpc(session, {
           method: 'sendTransaction',
           params: [JSON.stringify(payload)],
           id,
@@ -696,7 +698,7 @@ export class TBridge {
 
     try {
       const response = await Promise.race([
-        session.send({
+        this.sendRpc(session, {
           method: 'signData',
           params: [JSON.stringify(body)],
           id,
@@ -790,6 +792,26 @@ export class TBridge {
     const id = String(this.requestId);
     this.requestId += 1;
     return id;
+  }
+
+  /**
+   * An HTTP wallet that never answers is usually closed, or its session was
+   * replaced by a connect from another device (ton-connect/sdk#327) — the bridge
+   * gives no signal for that. Say so instead of a bare TIMEOUT, so the host can
+   * offer a reconnect with its own params (ton_proof etc.).
+   */
+  private sendRpc(session: ActiveSession, request: AppRequest): Promise<WalletResponse> {
+    return session.send(request).catch((e: unknown) => {
+      if (session.kind === 'http' && TBridgeError.is(e) && e.code === 'TIMEOUT') {
+        throw new TBridgeError(
+          'WALLET_UNRESPONSIVE',
+          'Wallet did not respond. It may be closed, or this session was replaced by a ' +
+            'connection from another device — reconnect the wallet.',
+          e,
+        );
+      }
+      throw e;
+    });
   }
 
   private async bumpPersistedRpcId(): Promise<void> {
