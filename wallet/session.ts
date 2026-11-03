@@ -141,6 +141,8 @@ async function decryptSecretFromStorage(payload: string): Promise<string | null>
 async function readEncryptedSessionSecret(key: string): Promise<string | null> {
   const stored = readSessionStorage(key);
   if (!stored) return null;
+  // Plain hex when no __WALLET_SESSION_SECRET__ was configured at write time.
+  if (!stored.startsWith('enc:')) return stored;
   try {
     return await decryptSecretFromStorage(stored);
   } catch {
@@ -151,8 +153,10 @@ async function readEncryptedSessionSecret(key: string): Promise<string | null> {
 
 async function writeEncryptedSessionSecret(key: string, value: string): Promise<void> {
   try {
+    // Without a passphrase store as-is: tab scope is the protection 'session' mode
+    // promises. Previously nothing was written and restore could never succeed.
     const encrypted = await encryptSecretForStorage(value);
-    if (encrypted) writeSessionStorage(key, encrypted);
+    writeSessionStorage(key, encrypted ?? value);
   } catch {
     /* ignore */
   }

@@ -96,6 +96,8 @@ export class TBridge {
   private theme: TBridgeTheme;
   private connecting = false;
   private restoring = false;
+  /** Bumped by cancelConnect / destroy so a superseded connect() cannot touch state. */
+  private connectGeneration = 0;
   /** Cleanup for in-flight HTTP connect (SSE channel) */
   private pendingConnectCleanup: (() => void) | null = null;
 
@@ -210,9 +212,19 @@ export class TBridge {
     this.connecting = true;
     this.setStatus({ status: 'connecting' });
 
+    const gen = ++this.connectGeneration;
+    const stale = () => gen !== this.connectGeneration;
+    /** After every await: bail out if cancelled; tell the wallet to drop a late session. */
+    const ensureCurrent = (late?: ActiveSession): void => {
+      if (!stale()) return;
+      if (late) void late.disconnect().catch(() => undefined);
+      throw new TBridgeError('USER_REJECTED', 'Connect cancelled');
+    };
+
     try {
       // Parallel: wallets list + nothing else blocking
       const wallets = await this.discovery.getWallets();
+      ensureCurrent();
       const connectRequest = this.buildConnectRequest(options.tonProofPayload);
 
       const injected = detectInjectedWallet(wallets);
@@ -228,9 +240,10 @@ export class TBridge {
           timeoutMs: this.requestTimeoutMs,
           hooks: this.createJsHooks(),
         });
+        ensureCurrent(session);
 
         this.applyConnectSuccess(event, wallet, session);
-        await saveLastWallet(this.storage, wallet.app_name);
+        await this.persistSafely(() => saveLastWallet(this.storage, wallet.app_name));
         return this.status;
       }
 
@@ -255,8 +268,9 @@ export class TBridge {
           timeoutMs: this.requestTimeoutMs,
           hooks: this.createJsHooks(),
         });
+        ensureCurrent(session);
         this.applyConnectSuccess(event, wallet, session);
-        await saveLastWallet(this.storage, wallet.app_name);
+        await this.persistSafely(() => saveLastWallet(this.storage, wallet.app_name));
         return this.status;
       }
 
@@ -276,6 +290,8 @@ export class TBridge {
       }
 
       const sessionCrypto = await SessionCrypto.create(this.cryptoProvider);
+      if (stale()) sessionCrypto.dispose();
+      ensureCurrent();
       this.sessionCrypto = sessionCrypto;
 
       const hooks = this.createHttpHooks();
@@ -301,37 +317,44 @@ export class TBridge {
           };
         },
       });
+      ensureCurrent(session);
       this.pendingConnectCleanup = null;
 
       this.applyConnectSuccess(event, wallet, session);
 
       const keys = sessionCrypto.exportKeys();
-      await savePersistedSession(this.storage, {
-        version: PROTOCOL_VERSION,
-        walletAppName: wallet.app_name,
-        clientId: keys.publicKeyHex,
-        walletClientId: session.kind === 'http' ? session.walletClientId : '',
-        bridgeUrl: sse.url,
-        account: this.account!,
-        device: this.device!,
-        createdAt: Date.now(),
-        origin: currentOrigin(),
-        secretKeyHex: keys.secretKeyHex,
-        lastRpcId: this.requestId,
-        connectItems: this.lastConnectItems ?? undefined,
+      // Storage failures (quota, no crypto.subtle) must not undo a live connection;
+      // they only mean the session will not survive a reload.
+      await this.persistSafely(async () => {
+        await savePersistedSession(this.storage, {
+          version: PROTOCOL_VERSION,
+          walletAppName: wallet.app_name,
+          clientId: keys.publicKeyHex,
+          walletClientId: session.kind === 'http' ? session.walletClientId : '',
+          bridgeUrl: sse.url,
+          account: this.account!,
+          device: this.device!,
+          createdAt: Date.now(),
+          origin: currentOrigin(),
+          secretKeyHex: keys.secretKeyHex,
+          lastRpcId: this.requestId,
+          connectItems: this.lastConnectItems ?? undefined,
+        });
+        await saveLastRpcId(this.storage, this.requestId);
+        await saveLastWallet(this.storage, wallet.app_name);
       });
-      await saveLastRpcId(this.storage, this.requestId);
-      await saveLastWallet(this.storage, wallet.app_name);
 
       return this.status;
     } catch (e) {
+      const err = TBridgeError.is(e) ? e : new TBridgeError('UNKNOWN', 'Connect failed', e);
+      // A superseded attempt must not tear down / report over the current state.
+      if (stale()) throw err;
       this.teardownSession();
       this.setStatus({ status: 'disconnected' });
-      const err = TBridgeError.is(e) ? e : new TBridgeError('UNKNOWN', 'Connect failed', e);
       this.emitter.emit('error', err);
       throw err;
     } finally {
-      this.connecting = false;
+      if (!stale()) this.connecting = false;
     }
   }
 
@@ -341,6 +364,7 @@ export class TBridge {
    */
   cancelConnect(): void {
     if (!this.connecting && !this.pendingConnectCleanup) return;
+    this.connectGeneration += 1;
     try {
       this.pendingConnectCleanup?.();
     } catch {
@@ -452,7 +476,14 @@ export class TBridge {
     } catch (e) {
       this.log('restoreConnection failed', e);
       this.teardownSession();
-      await clearPersistedSession(this.storage).catch(() => undefined);
+      // Offline / bridge or registry down is temporary: keep the session for the
+      // next attempt. Only drop it when the stored data itself is unusable.
+      const transient =
+        TBridgeError.is(e) &&
+        (e.code === 'HTTP_BRIDGE_ERROR' || e.code === 'BRIDGE_UNAVAILABLE' || e.code === 'TIMEOUT');
+      if (!transient) {
+        await clearPersistedSession(this.storage).catch(() => undefined);
+      }
       return this.status;
     } finally {
       this.restoring = false;
@@ -511,10 +542,14 @@ export class TBridge {
       })),
     };
 
+    const session = this.session!;
+    const id = this.nextId();
+    // Persist before sending: a rejected / timed-out request still consumed the id,
+    // and wallets silently drop non-increasing ids after a reload.
+    await this.bumpPersistedRpcId();
+
     const clientId =
-      this.sessionCrypto?.clientId ??
-      (this.session?.kind === 'http' ? this.session.clientId : '') ??
-      '';
+      this.sessionCrypto?.clientId ?? (session.kind === 'http' ? session.clientId : '') ?? '';
 
     let sheet: ActionSheetHandle | null = null;
     let rejectCancel: ((err: TBridgeError) => void) | null = null;
@@ -522,7 +557,7 @@ export class TBridge {
       rejectCancel = reject;
     });
 
-    if (this.session?.kind === 'http' && clientId) {
+    if (session.kind === 'http' && clientId) {
       sheet = showActionSheet({
         locale: this.locale,
         theme: this.theme,
@@ -537,10 +572,10 @@ export class TBridge {
 
     try {
       const response = await Promise.race([
-        this.session!.send({
+        session.send({
           method: 'sendTransaction',
           params: [JSON.stringify(payload)],
-          id: this.nextId(),
+          id,
         }),
         cancelPromise,
       ]);
@@ -553,7 +588,6 @@ export class TBridge {
 
       const boc =
         typeof response.result === 'string' ? response.result : String(response.result ?? '');
-      await this.bumpPersistedRpcId();
       return { boc };
     } catch (e) {
       sheet?.close();
@@ -580,10 +614,12 @@ export class TBridge {
       ...payload,
     };
 
+    const session = this.session!;
+    const id = this.nextId();
+    await this.bumpPersistedRpcId(); // see sendTransaction
+
     const clientId =
-      this.sessionCrypto?.clientId ??
-      (this.session?.kind === 'http' ? this.session.clientId : '') ??
-      '';
+      this.sessionCrypto?.clientId ?? (session.kind === 'http' ? session.clientId : '') ?? '';
 
     let sheet: ActionSheetHandle | null = null;
     let rejectCancel: ((err: TBridgeError) => void) | null = null;
@@ -591,7 +627,7 @@ export class TBridge {
       rejectCancel = reject;
     });
 
-    if (this.session?.kind === 'http' && clientId) {
+    if (session.kind === 'http' && clientId) {
       sheet = showActionSheet({
         locale: this.locale,
         theme: this.theme,
@@ -606,10 +642,10 @@ export class TBridge {
 
     try {
       const response = await Promise.race([
-        this.session!.send({
+        session.send({
           method: 'signData',
           params: [JSON.stringify(body)],
-          id: this.nextId(),
+          id,
         }),
         cancelPromise,
       ]);
@@ -620,7 +656,6 @@ export class TBridge {
         throw mapWalletError(response.error.code, response.error.message);
       }
 
-      await this.bumpPersistedRpcId();
       if (typeof response.result === 'string') {
         return { signature: response.result };
       }
@@ -645,6 +680,7 @@ export class TBridge {
       /* ignore */
     }
     this.pendingConnectCleanup = null;
+    this.connectGeneration += 1;
     this.connecting = false;
     this.restoring = false;
     this.teardownSession();
@@ -704,6 +740,18 @@ export class TBridge {
   private async bumpPersistedRpcId(): Promise<void> {
     // Dedicated key — no full session re-encrypt on every RPC.
     await saveLastRpcId(this.storage, this.requestId);
+  }
+
+  private async persistSafely(write: () => Promise<void>): Promise<void> {
+    try {
+      await write();
+    } catch (e) {
+      this.log('persist failed', e);
+      this.emitter.emit(
+        'error',
+        TBridgeError.is(e) ? e : new TBridgeError('STORAGE_ERROR', 'Failed to persist session', e),
+      );
+    }
   }
 
   /**

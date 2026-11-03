@@ -223,6 +223,11 @@ function openHttpChannel(params: {
   };
 
   function handlePlaintext(plaintext: string, from: string): void {
+    const sender = from.toLowerCase();
+    // Our client_id is public (QR / link / bridge URLs): anyone can encrypt to it.
+    // Once paired, only the wallet's key may talk to us.
+    if (walletClientId && sender !== walletClientId) return;
+
     let msg: unknown;
     try {
       msg = safeJsonParse(plaintext, 'bridge message');
@@ -232,7 +237,7 @@ function openHttpChannel(params: {
 
     if (isConnectEvent(msg)) {
       if (msg.event === 'connect') {
-        walletClientId = from.toLowerCase();
+        walletClientId = sender;
       }
       for (const w of connectWaiters.splice(0)) {
         clearTimeout(w.timer);
@@ -240,6 +245,8 @@ function openHttpChannel(params: {
       }
       return;
     }
+
+    if (!walletClientId) return; // not paired yet: nothing else is meaningful
 
     // Wallet-initiated disconnect event
     if (msg && typeof msg === 'object' && (msg as { event?: string }).event === 'disconnect') {
@@ -307,45 +314,49 @@ function openHttpChannel(params: {
 
       onError = () => {
         if (destroyed) return;
-        if (!opened) {
-          cleanupEs();
-          reject(new TBridgeError('HTTP_BRIDGE_ERROR', 'SSE connection failed'));
-          return;
-        }
-        setHealth('reconnecting');
         cleanupEs();
-        if (reconnectAttempt >= SSE_MAX_RECONNECT_ATTEMPTS) {
-          // Hard-stop: no further reconnects, fail pending RPCs, mark channel dead
-          // so subsequent send() fails immediately instead of hanging on timeout.
-          channelDead = true;
-          setHealth('offline');
-          for (const [, p] of pending) {
-            clearTimeout(p.timer);
-            p.reject(
-              new TBridgeError('HTTP_BRIDGE_ERROR', 'Bridge offline after max reconnect attempts'),
-            );
-          }
-          pending.clear();
-          for (const w of connectWaiters.splice(0)) {
-            clearTimeout(w.timer);
-            w.reject(
-              new TBridgeError('HTTP_BRIDGE_ERROR', 'Bridge offline after max reconnect attempts'),
-            );
-          }
-          return;
+        if (opened) {
+          scheduleReconnect();
+        } else {
+          // Caller decides: initial open fails the channel, reconnect attempts retry.
+          reject(new TBridgeError('HTTP_BRIDGE_ERROR', 'SSE connection failed'));
         }
-        const delay = backoffMs(reconnectAttempt++);
-        reconnectTimer = setTimeout(() => {
-          openSse().catch(() => {
-            setHealth('offline');
-          });
-        }, delay);
       };
 
       eventSource.addEventListener('open', onOpen);
       eventSource.addEventListener('message', onMessage as EventListener);
       eventSource.addEventListener('error', onError);
     });
+
+  function scheduleReconnect(): void {
+    if (destroyed) return;
+    if (reconnectAttempt >= SSE_MAX_RECONNECT_ATTEMPTS) {
+      // Hard-stop: no further reconnects, fail pending RPCs, mark channel dead
+      // so subsequent send() fails immediately instead of hanging on timeout.
+      channelDead = true;
+      setHealth('offline');
+      const err = new TBridgeError(
+        'HTTP_BRIDGE_ERROR',
+        'Bridge offline after max reconnect attempts',
+      );
+      for (const [, p] of pending) {
+        clearTimeout(p.timer);
+        p.reject(err);
+      }
+      pending.clear();
+      for (const w of connectWaiters.splice(0)) {
+        clearTimeout(w.timer);
+        w.reject(err);
+      }
+      return;
+    }
+    setHealth('reconnecting');
+    const delay = backoffMs(reconnectAttempt++);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      openSse().catch(scheduleReconnect);
+    }, delay);
+  }
 
   const waitConnectEvent = (timeoutMs: number): Promise<ConnectEvent> =>
     new Promise((resolve, reject) => {
@@ -372,6 +383,35 @@ function openHttpChannel(params: {
   // Start SSE immediately (caller awaits openSse via connect/restore)
   const sseReady = openSse();
 
+  /** Encrypt + POST one request to the wallet. Resolves once the bridge accepted it. */
+  const post = async (request: AppRequest, to: string): Promise<void> => {
+    const body = crypto.encrypt(JSON.stringify(request), to);
+    const topic =
+      request.method === 'sendTransaction' ||
+      request.method === 'disconnect' ||
+      request.method === 'signData'
+        ? request.method
+        : undefined;
+    const url = messageUrl(bridgeUrl, clientId, to, BRIDGE_MESSAGE_TTL_SEC, topic);
+    let res: Response;
+    try {
+      // Body: base64(nonce||ciphertext). No Content-Type — matches bridge clients
+      // that POST a bare string body (wallets / Telegram bridge).
+      res = await fetch(url, {
+        method: 'POST',
+        body,
+        signal: abort.signal,
+        credentials: 'omit',
+        cache: 'no-store',
+      });
+    } catch (e) {
+      throw new TBridgeError('HTTP_BRIDGE_ERROR', 'Failed to post message', e);
+    }
+    if (!res.ok) {
+      throw new TBridgeError('HTTP_BRIDGE_ERROR', `Bridge POST failed: HTTP ${res.status}`);
+    }
+  };
+
   const session: HttpBridgeSession = {
     kind: 'http',
     bridgeUrl,
@@ -388,15 +428,6 @@ function openHttpChannel(params: {
       if (channelDead) {
         throw new TBridgeError('HTTP_BRIDGE_ERROR', 'Bridge channel offline — reconnect required');
       }
-      const body = crypto.encrypt(JSON.stringify(request), walletClientId);
-      const topic =
-        request.method === 'sendTransaction' ||
-        request.method === 'disconnect' ||
-        request.method === 'signData'
-          ? request.method
-          : undefined;
-
-      const url = messageUrl(bridgeUrl, clientId, walletClientId, BRIDGE_MESSAGE_TTL_SEC, topic);
 
       const responsePromise = new Promise<WalletResponse>((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -405,29 +436,18 @@ function openHttpChannel(params: {
         }, params.timeoutMs);
         pending.set(request.id, { resolve, reject, timer });
       });
+      // destroy() during the POST may reject it before the caller awaits it.
+      responsePromise.catch(() => undefined);
 
       try {
-        // Body: base64(nonce||ciphertext). No Content-Type — matches bridge clients
-        // that POST a bare string body (wallets / Telegram bridge).
-        const res = await fetch(url, {
-          method: 'POST',
-          body,
-          signal: abort.signal,
-          credentials: 'omit',
-          cache: 'no-store',
-        });
-        if (!res.ok) {
-          pending.delete(request.id);
-          throw new TBridgeError('HTTP_BRIDGE_ERROR', `Bridge POST failed: HTTP ${res.status}`);
-        }
+        await post(request, walletClientId);
       } catch (e) {
         const p = pending.get(request.id);
         if (p) {
           clearTimeout(p.timer);
           pending.delete(request.id);
         }
-        if (TBridgeError.is(e)) throw e;
-        throw new TBridgeError('HTTP_BRIDGE_ERROR', 'Failed to post message', e);
+        throw e;
       }
 
       return responsePromise;
@@ -437,12 +457,10 @@ function openHttpChannel(params: {
         session.destroy();
         return;
       }
+      // Fire-and-forget like the reference SDK: the wallet may be closed and never
+      // answer, so only wait for the bridge to accept the POST.
       try {
-        await session.send({
-          method: 'disconnect',
-          params: [],
-          id: String(Date.now()),
-        });
+        await post({ method: 'disconnect', params: [], id: String(Date.now()) }, walletClientId);
       } catch {
         /* best-effort */
       }

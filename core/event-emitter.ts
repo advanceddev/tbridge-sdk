@@ -18,7 +18,8 @@ export class TypedEventEmitter<EventMap extends Record<string, unknown>> {
 
     return () => {
       set!.delete(handler as Handler<EventMap[keyof EventMap]>);
-      if (set!.size === 0) {
+      // Guard: a repeated call must not delete a newer set registered for this event.
+      if (set!.size === 0 && this.listeners.get(event) === set) {
         this.listeners.delete(event);
       }
     };
