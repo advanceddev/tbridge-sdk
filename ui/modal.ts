@@ -20,6 +20,7 @@ import {
 import { createAboutOverlay } from './about';
 import { renderWalletGrid } from './wallet-grid';
 import { renderWaitingView } from './waiting-view';
+import { bindBack } from './back-handler';
 
 export interface WalletModalOptions {
   wallets: WalletInfo[];
@@ -209,9 +210,12 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
     applyView(prev);
   };
 
+  let unbindBack: (() => void) | null = null;
+
   const close = (opts?: { silent?: boolean }): void => {
     if (state.closed) return;
     dispatch({ type: 'close' });
+    unbindBack?.();
     about.destroy();
     document.removeEventListener('keydown', onKey);
     unlockScroll();
@@ -235,6 +239,22 @@ export function openWalletModal(options: WalletModalOptions): WalletModalHandle 
     if (event.target === overlay) close();
   });
   document.addEventListener('keydown', onKey);
+
+  // Platform back (Android / iOS swipe / browser / Telegram BackButton) mirrors the
+  // in-modal controls: about → close it, waiting → list, list → close.
+  unbindBack = bindBack(() => {
+    if (about.isOpen()) {
+      about.close();
+      return true;
+    }
+    if (state.mode === 'waiting') {
+      options.onBackFromWaiting?.();
+      dispatch({ type: 'show_list' });
+      return true;
+    }
+    close();
+    return false;
+  });
 
   syncChrome();
   applyView(null); // first paint

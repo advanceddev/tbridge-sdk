@@ -251,9 +251,18 @@ export function installBrowserFakes(): void {
   g.EventSource = FakeEventSource;
   g.sessionStorage = memSessionStorage();
   g.matchMedia = () => ({ matches: false });
-  g.addEventListener = (type: string, fn: (ev: unknown) => void) => {
+  g.addEventListener = (type: string, fn: (ev: unknown) => void, opts?: { once?: boolean }) => {
     if (!windowListeners.has(type)) windowListeners.set(type, new Set());
-    windowListeners.get(type)!.add(fn);
+    const set = windowListeners.get(type)!;
+    if (opts?.once) {
+      const once = (ev: unknown) => {
+        set.delete(once);
+        fn(ev);
+      };
+      set.add(once);
+    } else {
+      set.add(fn);
+    }
   };
   g.removeEventListener = (type: string, fn: (ev: unknown) => void) => {
     windowListeners.get(type)?.delete(fn);
