@@ -416,7 +416,8 @@ describe('TBridge.cancelConnect', () => {
 });
 
 describe('TBridge.connect with failing storage', () => {
-  it('stays connected when persisting the session fails', async () => {
+  // By design (and same as @tonconnect/sdk): an unavailable storage aborts the connection.
+  it('drops the connection when persisting the session fails', async () => {
     mockFetch();
     makeInjected(async () => connectEvent(1));
     const storage = new MemoryStorageAdapter();
@@ -424,9 +425,8 @@ describe('TBridge.connect with failing storage', () => {
       throw new Error('QuotaExceededError');
     };
     const bridge = makeBridge(storage);
-    const status = await bridge.connect();
-    expect(status.status).toBe('connected');
-    expect(bridge.isConnected).toBe(true);
+    await expect(bridge.connect()).rejects.toBeDefined();
+    expect(bridge.isConnected).toBe(false);
   });
 });
 

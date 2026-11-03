@@ -243,7 +243,7 @@ export class TBridge {
         ensureCurrent(session);
 
         this.applyConnectSuccess(event, wallet, session);
-        await this.persistSafely(() => saveLastWallet(this.storage, wallet.app_name));
+        await saveLastWallet(this.storage, wallet.app_name);
         return this.status;
       }
 
@@ -270,7 +270,7 @@ export class TBridge {
         });
         ensureCurrent(session);
         this.applyConnectSuccess(event, wallet, session);
-        await this.persistSafely(() => saveLastWallet(this.storage, wallet.app_name));
+        await saveLastWallet(this.storage, wallet.app_name);
         return this.status;
       }
 
@@ -323,26 +323,23 @@ export class TBridge {
       this.applyConnectSuccess(event, wallet, session);
 
       const keys = sessionCrypto.exportKeys();
-      // Storage failures (quota, no crypto.subtle) must not undo a live connection;
-      // they only mean the session will not survive a reload.
-      await this.persistSafely(async () => {
-        await savePersistedSession(this.storage, {
-          version: PROTOCOL_VERSION,
-          walletAppName: wallet.app_name,
-          clientId: keys.publicKeyHex,
-          walletClientId: session.kind === 'http' ? session.walletClientId : '',
-          bridgeUrl: sse.url,
-          account: this.account!,
-          device: this.device!,
-          createdAt: Date.now(),
-          origin: currentOrigin(),
-          secretKeyHex: keys.secretKeyHex,
-          lastRpcId: this.requestId,
-          connectItems: this.lastConnectItems ?? undefined,
-        });
-        await saveLastRpcId(this.storage, this.requestId);
-        await saveLastWallet(this.storage, wallet.app_name);
+      // By design: a storage failure aborts the connection (see catch below).
+      await savePersistedSession(this.storage, {
+        version: PROTOCOL_VERSION,
+        walletAppName: wallet.app_name,
+        clientId: keys.publicKeyHex,
+        walletClientId: session.kind === 'http' ? session.walletClientId : '',
+        bridgeUrl: sse.url,
+        account: this.account!,
+        device: this.device!,
+        createdAt: Date.now(),
+        origin: currentOrigin(),
+        secretKeyHex: keys.secretKeyHex,
+        lastRpcId: this.requestId,
+        connectItems: this.lastConnectItems ?? undefined,
       });
+      await saveLastRpcId(this.storage, this.requestId);
+      await saveLastWallet(this.storage, wallet.app_name);
 
       return this.status;
     } catch (e) {
@@ -740,18 +737,6 @@ export class TBridge {
   private async bumpPersistedRpcId(): Promise<void> {
     // Dedicated key — no full session re-encrypt on every RPC.
     await saveLastRpcId(this.storage, this.requestId);
-  }
-
-  private async persistSafely(write: () => Promise<void>): Promise<void> {
-    try {
-      await write();
-    } catch (e) {
-      this.log('persist failed', e);
-      this.emitter.emit(
-        'error',
-        TBridgeError.is(e) ? e : new TBridgeError('STORAGE_ERROR', 'Failed to persist session', e),
-      );
-    }
   }
 
   /**
