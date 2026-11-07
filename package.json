@@ -57,7 +57,8 @@
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
-    "prebuild": "pnpm typecheck && pnpm lint"
+    "prebuild": "pnpm typecheck && pnpm lint",
+    "deploy": "pnpm run build && tgcloud push"
   },
   "dependencies": {
     "qr": "^0.7.2",
