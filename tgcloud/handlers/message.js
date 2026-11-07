@@ -5,8 +5,8 @@
 import { api } from 'sdk';
 import { t } from '../lib/i18n.js';
 import { welcomeKeyboard } from '../lib/keyboards.js';
-import { SPLASH_IMAGE_URL, ALLOWED_CMDS } from '../lib/constants.js';
-
+import { ALLOWED_CMDS } from '../lib/constants.js';
+import { buildWelcomeRichMessage } from '../lib/richMessages.js';
 /**
  * Parse /cmd, /cmd@bot, /cmd args
  * @param {string | undefined} text
@@ -48,16 +48,15 @@ export default async function (message) {
 
   if (cmd.name === 'start') {
     try {
-      await api.sendPhoto({
+      await api.sendRichMessage({
         chat_id: chatId,
-        photo: SPLASH_IMAGE_URL,
-        caption: copy.welcome,
-        reply_markup: keyboard,
+        rich_message: buildWelcomeRichMessage(copy),
+        reply_markup: welcomeKeyboard(copy, ownerId),
       });
     } catch {
       await api.sendMessage({
         chat_id: chatId,
-        text: copy.welcome,
+        text: copy.welcome.title,
         reply_markup: keyboard,
       });
     }

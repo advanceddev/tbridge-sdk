@@ -5,14 +5,19 @@
 
 const MESSAGES = {
   ru: {
-    welcome:
-      'TBridge - это SDK, написанный на чистом TypeScript, предназначенный для подключения кошельков, создания зашифрованных сессий, а также запроса переводов или подписей в сети TON.\n\nОн не привязан к конкретному фреймворку (поддерживает React, Vue, Svelte или работу без фреймворков), включает опциональный готовый пользовательский интерфейс и разработан для использования в полноценных dApp и мини-приложениях Telegram (Telegram Mini Apps).',
-
+    welcome: {
+      title: 'TBridge SDK',
+      p1: 'TBridge - это SDK, написанный на чистом TypeScript, предназначенный для подключения кошельков, создания зашифрованных сессий, а также запроса переводов или подписей в сети TON.',
+      p2: '\nУстановка',
+    },
     openApp: 'Запустить демо-приложение',
   },
   en: {
-    welcome:
-      'TBridge - s a pure TypeScript SDK for discovering wallets, establishing encrypted sessions, and requesting transfers / signatures on TON.\n\nIt is framework-agnostic (React, Vue, Svelte, or vanilla), ships an optional vanilla UI, and is built for production dApps and Telegram Mini Apps.',
+    welcome: {
+      title: 'TBridge SDK',
+      p1: 'TBridge - is a pure TypeScript SDK for discovering wallets, establishing encrypted sessions, and requesting transfers / signatures on TON.',
+      p2: '\nInstall:',
+    },
     openApp: 'Launch demo-app',
   },
 };
